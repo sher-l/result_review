@@ -1,0 +1,24 @@
+# 审核框架 Python 依赖
+# 安装: pip install -r requirements.txt
+
+# 文档解析
+python-docx>=0.8.11
+
+# XML 处理
+lxml>=4.9.0
+
+# 数据处理
+pandas>=1.5.0
+
+# 测试
+pytest>=7.0.0
+lxml>=4.9.0
+
+# 数据处理
+pandas>=1.5.0
+
+# 图像分析（可选，缺失时 ImageSimilarityChecker 自动跳过）
+Pillow>=9.0.0
+
+# 测试（开发时）
+pytest>=7.0.0

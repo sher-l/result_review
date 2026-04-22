@@ -1,0 +1,268 @@
+{
+  "framework_version": "v6.6",
+  "updated_at": "2026-04-21",
+  "mode": "formal_audit",
+  "canonical_entrypoints": [
+    "README.md",
+    "MASTER_PROMPT.md",
+    "CORE_RULES.md",
+    "policy/audit_policy.json",
+    "AI_INDEX.md"
+  ],
+  "reference_only_docs": [
+    "WORKFLOW.md",
+    "CONVERGENCE_REVIEW_PROTOCOL.md",
+    "CHECKLIST_TEMPLATE.md",
+    "WORKFLOW_MODULE_CHECKS.md",
+    "STATISTICS_REFERENCE.md",
+    "lessons/",
+    "archive/"
+  ],
+  "intent_triggers_formal_audit": [
+    "开始审核",
+    "审核下一个",
+    "重审",
+    "复审"
+  ],
+  "default_execution": {
+    "auto_start_three_subagents": true,
+    "must_complete_visual_audit": true,
+    "must_disposition_mechanical_checks": true,
+    "must_use_structured_evidence_fields": true,
+    "must_generate_case_manifest": true,
+    "must_write_review_event_log": true,
+    "must_run_convergence_compare": true,
+    "must_generate_arbitration_queue": true,
+    "must_run_final_report_linter": true,
+    "must_lint_markdown_structure": true,
+    "must_validate_markdown_links": true,
+    "must_generate_lint_autofix_plan": true,
+    "must_apply_lint_autofix_plan_when_available": true,
+    "must_sync_audit_state": true,
+    "must_export_html_after_markdown": true,
+    "must_finalize_via_finalize_audit": true,
+    "must_auto_archive_after_finalize": true,
+    "must_archive_only_after_publish_success": true
+  },
+  "required_precheck_files": [
+    "report_text.txt",
+    "report_structure.json",
+    "project_structure.json",
+    "mechanical_check_result.json",
+    "case_manifest.json"
+  ],
+  "required_final_files": [
+    "case_manifest.json",
+    "review_event_log.jsonl",
+    "coverage_matrix.md",
+    "fact_check_list.md",
+    "unresolved_items.md",
+    "convergence_report.json",
+    "convergence_report.md",
+    "arbitration_queue.json",
+    "final_review_report.md",
+    "final_report_lint.json",
+    "audit_state.json"
+  ],
+  "required_final_sections": {
+    "audit_conclusion": [
+      "审核结论"
+    ],
+    "analysis_table": [
+      "逐分析点审核结果",
+      "审核结果表"
+    ],
+    "three_agent_convergence": [
+      "三路",
+      "收敛"
+    ],
+    "mechanical_disposition": [
+      "机械",
+      "处置"
+    ],
+    "high_risk_modules": [
+      "高风险模块"
+    ]
+  },
+  "audit_dimensions": [
+    {
+      "id": "D1",
+      "name": "覆盖完整性",
+      "question": "是否漏掉模块、数据集、分组、阴性结果或失败分析"
+    },
+    {
+      "id": "D2",
+      "name": "事实正确性",
+      "question": "数据库、URL、术语、翻译、数字和方向是否正确"
+    },
+    {
+      "id": "D3",
+      "name": "三方一致性",
+      "question": "正文、表格、图注、结果文件是否一致"
+    },
+    {
+      "id": "D4",
+      "name": "结果可追溯",
+      "question": "关键结论能否追溯到具体文件与位置"
+    },
+    {
+      "id": "D5",
+      "name": "证据充分性",
+      "question": "是否有结构化结果和原始数值支持，而不只是图片"
+    },
+    {
+      "id": "D6",
+      "name": "方法-代码一致",
+      "question": "方法、参数、阈值、包名与代码实现是否一致"
+    }
+  ],
+  "finding_evidence_policy": {
+    "required_fields": [
+      "finding_key",
+      "id",
+      "severity",
+      "dimension",
+      "location",
+      "description",
+      "evidence",
+      "rule",
+      "source_type",
+      "source_path",
+      "locator",
+      "quote_or_value"
+    ],
+    "allowed_source_types": [
+      "report_text",
+      "figure",
+      "table",
+      "result_file",
+      "code",
+      "precheck"
+    ]
+  },
+  "review_lane_policy": {
+    "default_lane": "standard",
+    "allowed_lanes": [
+      "standard",
+      "strict"
+    ],
+    "strict_mode_rule": "all_non_decoration_figures_require_human_review",
+    "standard_mode_rule": "human_review_only_for_high_risk_or_machine_flagged_figures"
+  },
+  "publish_archive_policy": {
+    "canonical_html_pattern": "<project_id>_audit_report.html",
+    "auto_archive_after_finalize": true,
+    "publish_status_values": [
+      "pending",
+      "success",
+      "failed"
+    ],
+    "archive_requires": [
+      "publish_status=success",
+      "archive_approved=true"
+    ]
+  },
+  "high_risk_module_policy": {
+    "target_modules": [
+      "molecular_docking",
+      "molecular_dynamics",
+      "virtual_knockout"
+    ],
+    "required_dimensions": [
+      "module_exists",
+      "evidence_sufficient",
+      "reproducible",
+      "conclusion_not_overstated"
+    ],
+    "minimum_evidence_packages": {
+      "molecular_docking": [
+        "target_protein_or_receptor",
+        "ligand_list",
+        "score_table",
+        "pose_or_interaction_figure",
+        "threshold_or_interpretation_rule"
+      ],
+      "molecular_dynamics": [
+        "trajectory_or_raw_md_output",
+        "timescale_definition",
+        "rmsd_or_equivalent_numeric_series",
+        "summary_table_or_raw_metric_export",
+        "system_identity_consistency"
+      ],
+      "virtual_knockout": [
+        "input_gene_or_target_list",
+        "method_or_model_description",
+        "structured_result_table",
+        "conclusion_supporting_values"
+      ]
+    }
+  },
+  "mechanical_check_policy": {
+    "all_codes_must_have_disposition": true,
+    "special_rules": {
+      "MC-005": "目录命名未匹配仅作候选问题，必须经 AI 复核后才能认定模块缺失。",
+      "MC-011": "硬编码路径默认只作背景信息；只有暴露错误项目来源、错误模块来源或结果来源不明时才升级。"
+    }
+  },
+  "forbidden_shortcuts": [
+    "整体基本一致",
+    "未见明显问题",
+    "模块已检查",
+    "大体支持结论"
+  ],
+  "lint_policy": {
+    "check_external_links": true,
+    "check_local_links": true,
+    "external_link_cache_ttl_days": 7,
+    "ignore_external_url_patterns": [],
+    "ignored_warning_prefixes": [],
+    "warning_prefixes_as_errors": [],
+    "placeholder_terms": [
+      "TODO",
+      "TBD",
+      "FIXME",
+      "待补",
+      "待补充",
+      "占位",
+      "xxx",
+      "XXX"
+    ]
+  },
+  "terminology_policy": {
+    "forbidden_terms": [
+      {
+        "term": "人工复核",
+        "replacement": "AI复核",
+        "severity": "error"
+      },
+      {
+        "term": "人工判断",
+        "replacement": "AI判断",
+        "severity": "warning"
+      },
+      {
+        "term": "人工确认",
+        "replacement": "AI确认",
+        "severity": "warning"
+      }
+    ],
+    "required_any_terms": [
+      {
+        "scope": "final_review_report.md",
+        "terms": ["AI复核", "AI处置", "AI裁定"],
+        "severity": "warning"
+      }
+    ]
+  },
+  "deprecated_behavior": [
+    "把三路 sub-agent 当成可选动作",
+    "直接照抄 mechanical_check_result.json",
+    "只给总评不给逐分析点结论",
+    "把模块存在、证据充分、可复现、结论强度混为一个判断"
+  ],
+  "rereview_policy": {
+    "mode": "targeted",
+    "must_build_rereview_diff": true,
+    "max_rounds_before_keep_blocking_verdict": 2
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "enabled": true,
+  "default_title_prefix": "报告审核",
+  "provider": "wecom",
+  "webhook_url": "https://example.invalid/webhook",
+  "enabled_task_types": [
+    "audit",
+    "generic"
+  ],
+  "mentioned_mobile_list": [],
+  "mentioned_list": [],
+  "extra_fields": {
+    "workspace": "报告审核"
+  }
+}

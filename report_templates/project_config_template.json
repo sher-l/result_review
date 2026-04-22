@@ -1,0 +1,149 @@
+{
+  "_comment": "项目审核配置模板 - 复制此文件并重命名为 config.json",
+  "_usage": "审核新项目时，复制此文件到项目目录，填写项目信息，然后启动审核",
+
+  "project": {
+    "id": "{{PROJECT_ID}}",
+    "name": "{{PROJECT_NAME}}",
+    "path": "{{PROJECT_PATH}}",
+    "report_file": "{{WORD_REPORT_PATH}}",
+    "data_species": "人类",
+    "data_source": "TCGA/GEO/其他"
+  },
+
+  "correct_terms": {
+    "disease": {
+      "full": "喉鳞状细胞癌",
+      "abbr": "LSCC",
+      "alternatives": ["LSCC", "喉鳞癌"]
+    },
+    "database": "TCGA",
+    "validation_sets": ["GSE27020"],
+    "genes": [],
+    "pathways": []
+  },
+
+  "wrong_terms": {
+    "diseases": ["LSS", "ARDS", "Sepsis", "脓毒症", "PCOS", "IPF"],
+    "databases": ["TCGD"],
+    "other_projects": ["25YBB233F", "25YYS110F", "02_25YYH138F"],
+    "search_patterns": [
+      "LSS(?!C)",
+      "TCGD",
+      "ARDS\\+Sepsis",
+      "脓毒症",
+      "生存力数",
+      "关基因(?![要])",
+      "第风险"
+    ]
+  },
+
+  "audit_scope": {
+    "code_modules": [
+      "01_Rawdata",
+      "02_DEG",
+      "03_Enrichment",
+      "04_WGCNA",
+      "05_GSVA",
+      "06_Immune",
+      "07_Cox",
+      "08_Lasso",
+      "09_Machine",
+      "10_Nomogram",
+      "11_Immune_Cell",
+      "12_ssGSEA",
+      "13_Correlation",
+      "14_Correlation_Heatmap",
+      "15_Validation",
+      "16_PPI",
+      "17_ceRNA",
+      "18_Diagnosis",
+      "19_External",
+      "20_Final"
+    ],
+    "report_sections": [
+      "2.1",
+      "2.2",
+      "2.3",
+      "2.4",
+      "2.5",
+      "2.6",
+      "2.7",
+      "2.8",
+      "2.9",
+      "2.10",
+      "2.11",
+      "2.12"
+    ],
+    "data_files": {
+      "deg": ["DEG_sig.csv"],
+      "venn": ["Venn_gene.csv"],
+      "cox": ["Cox_sig.csv"],
+      "lasso": ["Lasso_coef.csv"],
+      "ml": ["RF_result.csv"],
+      "risk": ["train_riskScore.csv", "test_riskScore.csv"],
+      "immune": ["Immune_score.csv"],
+      "wgcna": ["module_gene.csv"],
+      "external": ["external_deg.csv"]
+    }
+  },
+
+  "agent_team": {
+    "version": "v3.0",
+    "structure": {
+      "lead": "lead-auditor",
+      "groups": [
+        {
+          "name": "Code Review Group",
+          "agents": ["code-reviewer", "code-validator"]
+        },
+        {
+          "name": "Content Review Group",
+          "agents": ["report-auditor", "data-verifier"]
+        }
+      ]
+    },
+    "rounds": 3,
+    "meetings": true,
+    "output_format": "markdown"
+  },
+
+  "quality_thresholds": {
+    "fatal": [
+      "species_mismatch",
+      "group_variable_error",
+      "missing_critical_file",
+      "systematic_term_error"
+    ],
+    "critical": [
+      "logic_error",
+      "file_missing",
+      "data_inconsistency",
+      "statistical_method_error"
+    ],
+    "warning": [
+      "typo",
+      "inconsistent_terminology",
+      "path_hardcoded",
+      "comment_error"
+    ],
+    "info": [
+      "optimization_suggestion",
+      "style_issue"
+    ]
+  },
+
+  "output": {
+    "directory": "result_review_report/{{PROJECT_ID}}",
+    "html_report": "audit_report.html",
+    "intermediate_dir": "intermediate/",
+    "log_file": "audit_log.txt"
+  },
+
+  "timing": {
+    "round1_duration": "30-45分钟",
+    "round2_duration": "20-30分钟",
+    "round3_duration": "15-20分钟",
+    "total_duration": "80-125分钟"
+  }
+}
