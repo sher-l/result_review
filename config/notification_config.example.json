@@ -2,7 +2,9 @@
   "enabled": true,
   "default_title_prefix": "报告审核",
   "provider": "wecom",
-  "webhook_url": "https://example.invalid/webhook",
+  "webhook_url": "",
+  "webhook_key": "",
+  "secret": "",
   "enabled_task_types": [
     "audit",
     "generic"
