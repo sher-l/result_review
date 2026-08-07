@@ -25,7 +25,7 @@ from itertools import islice
 
 # 文件类型分类
 IMG_EXTS = {'.png', '.jpg', '.jpeg', '.tif', '.tiff', '.svg', '.bmp', '.gif'}
-DATA_EXTS = {'.csv', '.tsv', '.txt'}
+DATA_EXTS = {'.csv', '.tsv', '.txt', '.xlsx', '.xls'}
 BINARY_DATA_EXTS = {'.rds', '.rdata', '.rda', '.h5', '.h5ad', '.h5seurat', '.loom'}
 CODE_EXTS = {'.r', '.R', '.py', '.rmd', '.qmd'}
 CONFIG_EXTS = {'.ini', '.cfg', '.yaml', '.yml', '.toml', '.json'}
@@ -45,7 +45,7 @@ DELIVERY_ATTACHMENT_ROOT_NAMES = {
 def scan_modules(project_dir: Path) -> list[dict]:
     """扫描分析模块（编号目录如 01_DEGs, 14_singcell）"""
     modules = []
-    module_pattern = re.compile(r'^(\d{2})[_\-](.+)')
+    module_pattern = re.compile(r'^(\d+)[_\-.](.+)')
 
     for d in sorted(project_dir.iterdir()):
         if not d.is_dir() or d.name in IGNORE_DIRS:
@@ -70,7 +70,7 @@ def scan_modules(project_dir: Path) -> list[dict]:
         files = [f for f in all_files if f.is_file()]
 
         n_code = sum(1 for f in files if f.suffix.lower() in CODE_EXTS)
-        n_csv = sum(1 for f in files if f.suffix.lower() in {'.csv', '.tsv'})
+        n_csv = sum(1 for f in files if f.suffix.lower() in DATA_EXTS | BINARY_DATA_EXTS)
         n_img = sum(1 for f in files if f.suffix.lower() in IMG_EXTS)
         n_pdf = sum(1 for f in files if f.suffix.lower() in PDF_EXT)
         n_rds = sum(1 for f in files if f.suffix.lower() in BINARY_DATA_EXTS)
@@ -142,7 +142,7 @@ def _candidate_module_roots(project_dir: Path) -> list[Path]:
 def scan_modules(project_dir: Path) -> list[dict]:
     """扫描分析模块，支持顶层和“分析结果/结果文件/”二级交付结构。"""
     modules = []
-    module_pattern = re.compile(r'^(\d{2})[_\-](.+)')
+    module_pattern = re.compile(r'^(\d+)[_\-.](.+)')
     seen_paths = set()
 
     for root in _candidate_module_roots(project_dir):
@@ -158,18 +158,35 @@ def scan_modules(project_dir: Path) -> list[dict]:
             m = module_pattern.match(d.name)
             if not m:
                 if root == project_dir and d.name.lower() not in ('script', 'scripts', 'code', 'check_reports'):
+                    all_files = list(islice(d.rglob('*'), 2000))
+                    files = [f for f in all_files if f.is_file()]
+                    n_code = sum(1 for f in files if f.suffix.lower() in CODE_EXTS)
+                    n_csv = sum(1 for f in files if f.suffix.lower() in DATA_EXTS | BINARY_DATA_EXTS)
+                    n_img = sum(1 for f in files if f.suffix.lower() in IMG_EXTS)
+                    n_pdf = sum(1 for f in files if f.suffix.lower() in PDF_EXT)
+                    n_rds = sum(1 for f in files if f.suffix.lower() in BINARY_DATA_EXTS)
+                    subdirs = [sd.name for sd in d.iterdir() if sd.is_dir()]
                     modules.append({
                         'name': d.name,
                         'number': None,
                         'is_module': False,
                         'path': rel_path,
+                        'subdirs': subdirs,
+                        'file_counts': {
+                            'total': len(files),
+                            'code': n_code,
+                            'csv': n_csv,
+                            'images': n_img,
+                            'pdf': n_pdf,
+                            'binary_data': n_rds,
+                        },
                     })
                 continue
 
             all_files = list(islice(d.rglob('*'), 2000))
             files = [f for f in all_files if f.is_file()]
             n_code = sum(1 for f in files if f.suffix.lower() in CODE_EXTS)
-            n_csv = sum(1 for f in files if f.suffix.lower() in {'.csv', '.tsv'})
+            n_csv = sum(1 for f in files if f.suffix.lower() in DATA_EXTS | BINARY_DATA_EXTS)
             n_img = sum(1 for f in files if f.suffix.lower() in IMG_EXTS)
             n_pdf = sum(1 for f in files if f.suffix.lower() in PDF_EXT)
             n_rds = sum(1 for f in files if f.suffix.lower() in BINARY_DATA_EXTS)
@@ -415,7 +432,7 @@ def scan_data_files(project_dir: Path) -> list[dict]:
                 'cols': cols,
                 'header': header[:10] if header else [],  # 前10列名
             })
-        elif ext in BINARY_DATA_EXTS:
+        elif ext in DATA_EXTS | BINARY_DATA_EXTS:
             data_files.append({
                 'path': str(f.relative_to(project_dir)),
                 'type': ext.lstrip('.'),

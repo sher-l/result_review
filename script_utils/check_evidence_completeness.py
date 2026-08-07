@@ -3,7 +3,7 @@
 """
 证据完整性与参数完备性检查器（P1级 - CRITICAL）
 
-前移人工批注中高频但此前未被自动脚本显式捕获的风险：
+前移 AI批注中高频但此前未被自动脚本显式捕获的风险：
 1. 方法段缺少关键参数（如 LASSO lambda 规则）
 2. 只有筛选后结果，缺少原始总表 / 中间总表
 3. 表达验证、分子对接、分子动力学等模块只交图不交结构化结果
@@ -105,7 +105,7 @@ class EvidenceCompletenessChecker(BaseProjectChecker):
                 'category': '方法参数不完整',
                 'file': self._get_report_reference(),
                 'message': '报告提到 LASSO / glmnet，但未显式写明 lambda 选择规则（如 lambda.min 或 lambda.1se）。',
-                'suggestion': '在方法段补写模型选择规则及对应数值，避免人工批注重复指出参数不完整。'
+                'suggestion': '在方法段补写模型选择规则及对应数值，避免 AI批注重复指出参数不完整。'
             })
 
     # 单细胞上下文感知：如果表达模块含卡方/chi-square等单细胞统计表，认可为有效证据
@@ -385,7 +385,7 @@ class EvidenceCompletenessChecker(BaseProjectChecker):
                 'severity': 'WARNING',
                 'category': '图件导出异常',
                 'message': '检测到体积异常的小图件或空文件，存在导出失败、损坏或错图风险。',
-                'suggestion': '人工打开这些图件复核，必要时重新导出。',
+                'suggestion': '使用 AI图件复核这些图件，必要时重新导出。',
                 'evidence': {
                     'files': suspicious_files[:20]
                 }

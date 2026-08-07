@@ -3,17 +3,24 @@
 """
 三路收敛审核 Prompt 自动构造器
 
-功能：基于预检查结果和框架文档，为 3 个独立 Sub-Agent 生成完整的审核 prompt。
-解决核心问题：子代理不读文档就开始审核。此脚本确保每个子代理 prompt 包含所有必要上下文。
+功能：基于预检查结果和框架文档，生成“小切片 Sub-Agent + 三路汇总”审核 prompt。
+解决核心问题：
+1. 子代理不读文档就开始审核；
+2. 单个 Sub-Agent 一次性审核内容过多，触发 remote compact 或上下文丢失。
+
+v6.7 起默认不再让单个 Sub-Agent 承担完整项目审核；三路仍作为收敛口径，
+但执行层改为多个窄切片先落盘，再由每路汇总 prompt 生成 agent_a/b/c_result.json。
 
 用法：
     python launch_convergence_audit.py <review_dir> [--project-dir <project_dir>]
 
 输出：
     <review_dir>/agent_prompts/
-        agent_a_prompt.md  — Agent A: D1(覆盖) + D5(证据)
-        agent_b_prompt.md  — Agent B: D2(事实) + D3(一致性)
-        agent_c_prompt.md  — Agent C: D6(方法-代码) + 统计判断
+        agent_slice_manifest.json — 小切片执行清单
+        slices/*.md              — 每个窄切片的 Sub-Agent prompt
+        agent_a_prompt.md        — Agent A 汇总 prompt：只读取 A 路 slice JSON
+        agent_b_prompt.md        — Agent B 汇总 prompt：只读取 B 路 slice JSON
+        agent_c_prompt.md        — Agent C 汇总 prompt：只读取 C 路 slice JSON
         convergence_guide.md — Lead Auditor 收敛阶段指引
 """
 
@@ -22,6 +29,11 @@ import sys
 from pathlib import Path
 from datetime import datetime
 
+SCRIPT_UTILS_DIR = Path(__file__).resolve().parents[1] / 'script_utils'
+if str(SCRIPT_UTILS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_UTILS_DIR))
+
+from base_project_checker import strip_non_audit_appendix
 from policy_loader import load_policy, policy_path
 
 
@@ -63,7 +75,7 @@ _CORE_RULES_SUMMARY = f"""
 4. 证据是否足以支撑结论？
 
 ## 强制执行规则
-- 本次任务默认属于“正式审核”，三路独立审核为必做步骤，不等待额外授权
+- 本次任务默认属于“正式审核”，小切片执行 + A/B/C 三路汇总收敛为必做步骤，不等待额外授权
 - 先读 `{policy_path().as_posix()}`，它是当前唯一机器策略源
 - `mechanical_check_result.json` 中的结果只能作为候选问题，不能直接照单接收
 - 你必须区分：模块真实存在 / 证据是否充分 / 是否可复现 / 结论强度是否过度外推
@@ -145,7 +157,9 @@ _OUTPUT_FORMAT = """
   },
   "findings": [
     {
+      "raw_finding_id": "A:raw:001",
       "finding_key": "fk:xxxxxxxxxxxxxxxx",
+      "cluster_key": "cluster:xxxxxxxxxxxxxxxx",
       "id": "A-001",
       "severity": "FATAL/CRITICAL/MAJOR/WARNING/INFO",
       "dimension": "D1-D6",
@@ -156,7 +170,12 @@ _OUTPUT_FORMAT = """
       "source_type": "report_text/figure/table/result_file/code/precheck",
       "source_path": "具体文件路径或逻辑来源",
       "locator": "行号/页码/图号/表号/sheet/章节",
-      "quote_or_value": "引用原句、标签或关键数值"
+      "quote_or_value": "引用原句、标签或关键数值",
+      "module": "分析模块",
+      "claim": "被审核的具体声明",
+      "error_mechanism": "错误如何产生",
+      "evidence_object": "被比较的证据对象",
+      "repair_path": "需要重跑或修正的路径"
     }
   ],
   "mechanical_dispositions": [
@@ -170,12 +189,14 @@ _OUTPUT_FORMAT = """
   ],
   "high_risk_modules": [
     {
-      "module": "molecular_docking/md/virtual_knockout",
+      "module": "molecular_docking/molecular_dynamics/virtual_knockout/graphban_virtual_screening",
+      "status": "pass/fail/unknown/not_applicable",
       "module_exists": true/false,
       "evidence_sufficient": true/false,
       "reproducible": true/false,
       "conclusion_not_overstated": true/false,
-      "notes": "鍒嗗眰鍒ゆ柇鐨勭煭璇存槑"
+      "evidence_refs": [],
+      "reason": "分层判断的简要证据说明"
     }
   ],
   "self_review": {
@@ -207,6 +228,8 @@ _OUTPUT_FORMAT = """
 - evidence_level 只允许: A, B, C
 - disposition 只允许: 保留, 撤销, 降级, 升级
 - 如果某个字段无值，使用空字符串 "" 或 0，不要使用 null
+- 自动检查只能生成 candidate finding；不得自动决定严重度、实际结论污染或重跑结果数
+- 相似问题必须保留 raw_finding_id，不得因 finding_key 相似就提前终审合并
 """
 
 _OUTPUT_FORMAT += (
@@ -245,6 +268,176 @@ _DOUBLE_ROUND_INSTRUCTION = """
 - 你必须对每一条机械检查候选问题给出处理意见：`保留 / 撤销 / 降级 / 升级`
 - 如果你认为某条是误报，必须说明误报原因（如命名映射不足、目录匹配规则过窄）
 """
+
+
+_MERGE_INSTRUCTION = """
+## 三路汇总流程
+
+你不是原始审核切片，不要重新做全项目审核。
+
+### 第一轮：读取本路切片 JSON
+- 只读取本 Agent 对应的 `agent_results/slices/*.json`。
+- 汇总 findings、coverage_matrix、mechanical_dispositions、high_risk_modules。
+- 保留每条 finding 的 `source_path`、`locator`、`quote_or_value`，不要改写成无证据概述。
+
+### 第二轮：汇总自检
+- 去重同一问题，保持稳定 `finding_key`。
+- 检查机械检查候选问题是否已有处置；缺失时在 `self_review.missed_modules` 或 blocker 中标出。
+- 检查高风险模块四维判断是否齐全。
+- 只允许基于切片 JSON 做一致性修正；不要回到全文重新扩审。
+"""
+
+
+_COMPACT_SAFETY_PROTOCOL = """
+## Remote Compact 防护与小切片执行硬规则
+
+本框架把 remote compact failure 当作常态风险处理。除非项目被明确标记为 very_small，
+否则禁止让单个 Sub-Agent 一次性完成全项目审核。
+
+### 必须执行
+1. **小切片**：每个 Sub-Agent 只处理本 prompt 指定的一个窄范围，不得扩审到全项目。
+2. **不 fork 大上下文**：启动子代理时不要复制 leader 全量上下文；只传本 prompt 和必要路径。
+3. **落盘优先**：完整发现写入指定 JSON 文件；聊天返回最多 5 行，只允许状态、证据路径、发现数量、最高严重度、阻断项。
+4. **上下文预算**：单个切片最多读取 1 个大 JSON 摘要 + 必要的局部源文件；长日志写到 `.omx/logs/`。
+5. **硬停止**：完成本切片输出后立即停止；不要顺手审核其他模块。
+6. **批次上限**：Lead 每批最多并发 4 个切片；每批结束后写入 `review_event_log.jsonl` 并更新项目内 `subagent_supervision_summary.json`。
+7. **失败再拆分**：如果任一 Sub-Agent 触发 remote compact/context loss，Lead 必须把该切片按章节、模块、图号范围、文件组或问题簇继续拆小后重试；禁止按原范围重复启动。
+
+### 禁止执行
+- 禁止要求一个 Sub-Agent “完整审核整个项目”。
+- 禁止在聊天中粘贴长表、全文报告、完整日志或完整 JSON。
+- 禁止把 subagent 结果只留在聊天记录；必须写入文件。
+- 禁止把完整 Markdown 报告、完整 JSON、长日志、大表、完整通知 metadata 或内部归档路径贴回 Lead 主线程。
+"""
+
+
+_MODEL_QUALITY_PROTOCOL = """
+## 模型能力与重叠上下文硬规则
+
+小切片只用于控制上下文和防 compact，不代表降低审核判断能力。
+
+### 模型能力
+- Lead 只做监工/整合/仲裁，不在主线程展开长报告、长日志、完整清单或大证据；完整证据由 subagent 落盘。
+- 正式判断型 Sub-Agent 必须使用与主 agent 相同的模型；如主 agent 为 high reasoning，判断型子代理也必须 high；不要因为切片变小就降级或改用其他模型。
+- fast/mini 模型只可用于文件定位、路径清单、格式/schema 检查、grep 类检索；explore 同样只可作为检索/定位辅助。
+- 严重度裁定、跨模块一致性、统计适用性、高风险模块判断、最终仲裁不得下放给弱模型单独决定。
+
+### 重叠上下文
+- 每个判断型切片必须至少保留：项目摘要/结论段、Figure/Table 索引、机械检查摘要、case_manifest、与本切片相邻的依赖模块路径。
+- 高风险模块切片必须保留模块级完整上下文，不能按单文件过窄拆分。
+- 如果本切片需要的全局上下文缺失，应输出 blocker，而不是凭局部证据判通过。
+
+### 全局复核
+- A/B/C 汇总只汇总本路 slice JSON；Lead 必须再做全局一致性复核：覆盖缺口、slice 冲突、跨模块链条断裂、局部通过但整体不成立、未分配高风险模块。
+"""
+
+
+SLICE_SPECS = [
+    {
+        "id": "a01",
+        "agent": "A",
+        "title": "模块覆盖与报告范围",
+        "focus": "D1 覆盖完整性：报告章节、结果目录、流程模块是否一一对应。",
+        "read_first": ["report_structure.json", "project_structure.json", "report_text.txt"],
+        "questions": [
+            "报告声明的分析模块是否都有结果目录或文件？",
+            "结果目录中的核心模块是否在报告中出现？",
+            "是否存在未报告数据集、未报告模块或跨项目残留？",
+        ],
+    },
+    {
+        "id": "a02",
+        "agent": "A",
+        "title": "证据充分性与交付缺口",
+        "focus": "D5 证据充分性：每个核心结论是否具备结构化结果、代码或中间文件支撑。",
+        "read_first": ["project_structure.json", "mechanical_check_result.json"],
+        "questions": [
+            "哪些分析点只有图片、没有结构化结果表？",
+            "哪些结论缺少中间结果或原始输出？",
+            "药物预测、富集、网络、scRNA 模块证据等级分别是多少？",
+        ],
+    },
+    {
+        "id": "b01",
+        "agent": "B",
+        "title": "数字、阈值和事实一致性",
+        "focus": "D2 事实正确性：关键数字、阈值、基因名、数据库名是否一致。",
+        "read_first": ["report_structure.json", "mechanical_check_result.json", "report_text.txt"],
+        "questions": [
+            "正文、表格、图注中的关键数字是否一致？",
+            "阈值、p 值、logFC、TopN、样本量是否自洽？",
+            "机械检查候选事实问题哪些保留、撤销、降级或升级？",
+        ],
+    },
+    {
+        "id": "b02",
+        "agent": "B",
+        "title": "图文一致性与视觉预筛处置",
+        "focus": "D3 三方一致性：图号、图注、图片内容、视觉预筛 flags 是否闭环。",
+        "read_first": ["visual_prefilter.json", "visual_audit_checklist.json", "figure_audit.md", "report_text.txt"],
+        "questions": [
+            "视觉预筛标记是否已逐项处置？",
+            "是否存在重复图、错图、图题/正文不一致或外项目图残留？",
+            "图文错误是否影响核心结论？",
+        ],
+    },
+    {
+        "id": "b03",
+        "agent": "B",
+        "title": "数据集与外项目残留",
+        "focus": "D2+D3：GEO 编号、疾病/药物/体系名是否混入外项目或未报告来源。",
+        "read_first": ["project_structure.json", "report_text.txt"],
+        "questions": [
+            "代码或结果中的 GEO 是否全部在报告中声明？",
+            "疾病名、药物名、细胞类型、分子体系是否与本项目一致？",
+            "发现残留时应升级为 WARNING、MAJOR 还是 CRITICAL？",
+        ],
+    },
+    {
+        "id": "c01",
+        "agent": "C",
+        "title": "方法-代码一致性",
+        "focus": "D6 方法-代码一致：报告声称的软件包、算法和参数是否在代码中实现。",
+        "read_first": ["project_structure.json", "mechanical_check_result.json", "report_text.txt"],
+        "questions": [
+            "报告声称的方法是否能在代码文件中定位？",
+            "参数阈值是否与代码一致？",
+            "机械检查的方法-代码候选问题哪些为误报？",
+        ],
+    },
+    {
+        "id": "c02",
+        "agent": "C",
+        "title": "统计与机器学习结论充分性",
+        "focus": "统计判断：差异分析、模型筛选、ROC/AUC、校正方法和结论强度。",
+        "read_first": ["project_structure.json", "report_structure.json", "report_text.txt"],
+        "questions": [
+            "统计方法是否适用于当前数据结构？",
+            "机器学习输入、筛选算法、关键基因和验证结果是否对应？",
+            "ROC/AUC、置信区间、样本量等是否有结构化导出？",
+        ],
+    },
+    {
+        "id": "c03",
+        "agent": "C",
+        "title": "高风险模块专项",
+        "focus": "分子对接、分子动力学、虚拟敲除等高风险模块：存在性、证据充分性、可复现性、是否外推。",
+        "read_first": ["project_structure.json", "mechanical_check_result.json", "report_text.txt"],
+        "questions": [
+            "高风险模块是否真实存在结果文件？",
+            "是否交付可复现脚本、参数、运行命令和结构化结果？",
+            "报告结论是否超过现有证据强度？",
+        ],
+    },
+]
+
+
+def slice_output_path(review_dir: Path, spec: dict) -> Path:
+    return review_dir / "agent_results" / "slices" / f"agent_{spec['agent'].lower()}_{spec['id']}_result.json"
+
+
+def slice_prompt_path(review_dir: Path, spec: dict) -> Path:
+    return review_dir / "agent_prompts" / "slices" / f"agent_{spec['agent'].lower()}_{spec['id']}_prompt.md"
 
 
 def load_precheck_results(review_dir: Path) -> dict:
@@ -322,15 +515,15 @@ def load_precheck_results(review_dir: Path) -> dict:
     return results
 
 
-def load_report_excerpt(review_dir: Path, max_lines: int = 500) -> str:
-    """加载报告文本（截取前 N 行作为概览，完整文本由子代理自行读取）"""
+def load_report_excerpt(review_dir: Path, max_lines: int = 160) -> str:
+    """加载报告文本短概览，避免把整份报告塞入每个 Sub-Agent 上下文。"""
     report_path = review_dir / 'report_text.txt'
     if not report_path.exists():
         return "(报告文本不可用)"
-    lines = report_path.read_text(encoding='utf-8').splitlines()
+    lines = strip_non_audit_appendix(report_path.read_text(encoding='utf-8')).splitlines()
     if len(lines) <= max_lines:
         return '\n'.join(lines)
-    return '\n'.join(lines[:max_lines]) + f"\n\n... (共 {len(lines)} 行，以上为前 {max_lines} 行。请自行读取完整文件)"
+    return '\n'.join(lines[:max_lines]) + f"\n\n... (共 {len(lines)} 行，以上仅为前 {max_lines} 行概览。切片审核只能按需读取相关局部行段，不要全文粘贴。)"
 
 
 def build_agent_prompt(
@@ -341,22 +534,33 @@ def build_agent_prompt(
     precheck: dict,
     report_excerpt: str,
 ) -> str:
-    """构造单个 Sub-Agent 的完整 prompt"""
+    """构造每路汇总 Agent prompt。
+
+    该 prompt 只读取同一路的小切片 JSON，汇总成 convergence_compare.py
+    需要的 agent_a/b/c_result.json；不得重新审核完整项目。
+    """
 
     # 文件路径提示
+    agent_slice_inputs = "\n".join(
+        f"- `{slice_output_path(review_dir, spec)}`"
+        for spec in SLICE_SPECS
+        if spec["agent"] == agent_id
+    )
     paths_section = f"""
 ## 文件路径
 
 审核目录: `{review_dir}`
 {f'项目目录: `{project_dir}`' if project_dir else '项目目录: (未指定)'}
 
+### 本路必须汇总的小切片结果
+{agent_slice_inputs}
+
 ### 你需要读取的文件（按优先级）
-1. `{review_dir / 'report_text.txt'}` — 报告全文（含 [IMAGE: xxx] 标记）
-2. `{review_dir / 'report_structure.json'}` — 报告结构索引
-3. `{review_dir / 'project_structure.json'}` — 项目结构索引
-4. `{review_dir / 'mechanical_check_result.json'}` — 机械检查结果
-5. `{review_dir / 'figure_audit.md'}` — 视觉审核清单（逐图检查用）
-6. `{review_dir / 'visual_audit_checklist.json'}` — 图片审核详细清单
+1. `{review_dir / 'agent_results' / 'slices'}` — 本 Agent 对应的小切片 JSON
+2. `{review_dir / 'mechanical_check_result.json'}` — 只用于核对机械检查编号
+3. `{review_dir / 'project_structure.json'}` — 只用于核对路径和模块名
+
+不要重新全文审核 `report_text.txt`；如需补证据，只读取切片 JSON 中已经列出的局部路径/行号。
 """
 
     # 预检查结果摘要
@@ -396,31 +600,27 @@ def build_agent_prompt(
         visual_instruction = f"""
 ## 视觉审核要求
 
-**你必须使用 view_image 工具检查每张需审核的图片。**
-
-读取 `{review_dir / 'figure_audit.md'}` 获取每张图片的检查项清单。
-对每张图片至少检查：
-1. 文件可渲染（无空白/截断/损坏）
-2. 标题/副标题与本项目一致（无 copy-paste 残留）
-3. 轴标签存在且可读
-4. 图例存在且标签正确
-
-图片路径格式: `{review_dir / 'images' / 'image_XXX.png'}`
+汇总 Agent 不直接执行逐图审核；逐图或抽样检查必须由 `slices/` 中的图文一致性切片完成。
+如果图文切片缺失或未落盘，输出 blocker，不要自行补做全量视觉审核。
 """
 
     # 组装完整 prompt
-    prompt = f"""# 生物信息学报告审核 — Sub-Agent {agent_id}
+    prompt = f"""# 生物信息学报告审核 — Agent {agent_id} 汇总器
 
-**角色**: 你是生物信息学数据分析报告的高级审核员（Sub-Agent {agent_id}）。
-**独立性**: 你是三路独立审核中的一路。不要参考其他 Agent 的结论。独立完成全面审核后输出结果。
+**角色**: 你是生物信息学数据分析报告审核的 Agent {agent_id} 汇总器。
+**独立性**: 你只汇总 Agent {agent_id} 的小切片结果，不参考其他 Agent 的结论。
 **语言**: 使用中文输出。
-**注意**: 这是正式审核，不是草稿或初筛。你必须完成完整双轮审核，并对机械检查误报做裁决。
+**注意**: 这是正式审核，不是草稿或初筛。禁止重新做全项目审核；只合并同路 slice JSON，生成最终结构化 JSON。
+
+{_COMPACT_SAFETY_PROTOCOL}
+
+{_MODEL_QUALITY_PROTOCOL}
 
 {_CORE_RULES_SUMMARY}
 
 {emphasis}
 
-{_DOUBLE_ROUND_INSTRUCTION}
+{_MERGE_INSTRUCTION}
 
 {paths_section}
 
@@ -430,9 +630,9 @@ def build_agent_prompt(
 
 {_OUTPUT_FORMAT}
 
-## 报告文本概览
+## 报告文本短概览（仅供识别项目，不作为重新全文审核输入）
 
-以下是报告前 500 行。如不完整，请自行读取 report_text.txt 完整文件。
+以下是报告前 160 行。不要把它扩展为全文读取任务。
 
 ```
 {report_excerpt}
@@ -440,43 +640,217 @@ def build_agent_prompt(
 
 ---
 
-**开始审核。请严格按照双轮流程执行，输出 JSON 格式结果。**
+**开始汇总。请读取同路 slice JSON，输出 JSON 格式结果。**
 """
     return prompt
 
 
+def build_slice_prompt(
+    spec: dict,
+    review_dir: Path,
+    project_dir: Path | None,
+    precheck: dict,
+    report_excerpt: str,
+) -> str:
+    """构造一个窄切片 Sub-Agent prompt。"""
+    output_path = slice_output_path(review_dir, spec)
+    read_first = "\n".join(f"- `{review_dir / item}`" for item in spec["read_first"])
+    questions = "\n".join(f"{idx}. {question}" for idx, question in enumerate(spec["questions"], start=1))
+    agent_id = spec["agent"]
+
+    return f"""# 生物信息学报告审核 — 小切片 {spec['id']}：{spec['title']}
+
+**所属收敛路由**: Agent {agent_id}
+**切片范围**: {spec['focus']}
+**输出文件**: `{output_path}`
+**项目目录**: `{project_dir if project_dir else ''}`
+
+{_COMPACT_SAFETY_PROTOCOL}
+
+{_MODEL_QUALITY_PROTOCOL}
+
+## 只读输入
+
+优先读取以下文件；除非回答本切片问题必须，不要读取其他大文件：
+{read_first}
+
+如需定位报告原文，只读取相关行段并在 finding 中写明 `report_text.txt Lx-Ly`。
+如需跑 grep 或统计，请把完整日志写到 `.omx/logs/`，不要贴到聊天。
+
+## 本切片必须回答的问题
+
+{questions}
+
+## 预检查摘要
+
+```json
+{json.dumps(precheck, ensure_ascii=False, indent=2)[:6000]}
+```
+
+## 报告短概览
+
+```text
+{report_excerpt}
+```
+
+## 输出要求
+
+1. 将完整结果写入 `{output_path}`。
+2. 聊天最多返回 5 行，只返回：`完成/阻塞`、输出路径、发现数量、最高严重度、阻断项；不要贴完整报告、完整 JSON、长日志、大表或内部归档路径。
+3. JSON 必须包含：
+
+```json
+{{
+  "slice_id": "{spec['id']}",
+  "agent": "{agent_id}",
+  "title": "{spec['title']}",
+  "status": "completed/blocked",
+  "files_read": [],
+  "logs": [],
+  "coverage_matrix": {{}},
+  "findings": [],
+  "mechanical_dispositions": [],
+  "high_risk_modules": [],
+  "blockers": [],
+  "summary": {{
+    "total_findings": 0,
+    "fatal": 0,
+    "critical": 0,
+    "major": 0,
+    "warning": 0,
+    "info": 0,
+    "highest_severity": "INFO"
+  }}
+}}
+```
+
+finding 字段必须满足最终收敛要求：{_REQUIRED_FINDING_FIELDS}
+允许的 `source_type`: {_ALLOWED_SOURCE_TYPES}
+
+**硬停止条件**: 写入 `{output_path}` 后立即停止，不要扩审其他切片。
+"""
+
+
+def build_slice_manifest(review_dir: Path) -> dict:
+    by_agent: dict[str, list[dict]] = {"A": [], "B": [], "C": []}
+    for spec in SLICE_SPECS:
+        entry = {
+            "id": spec["id"],
+            "agent": spec["agent"],
+            "title": spec["title"],
+            "focus": spec["focus"],
+            "prompt_file": str(slice_prompt_path(review_dir, spec)),
+            "result_file": str(slice_output_path(review_dir, spec)),
+            "read_first": spec["read_first"],
+        }
+        by_agent[spec["agent"]].append(entry)
+    return {
+        "schema_version": "1.0",
+        "execution_model": "small_slice_subagents_then_three_route_merge",
+        "compact_safety": {
+            "max_parallel_slice_agents": 4,
+            "must_persist_slice_results": True,
+            "must_not_fork_full_context": True,
+            "must_checkpoint_between_batches": True,
+            "chat_output": "short_status_only",
+        },
+        "model_quality": {
+            "principle": "small slices control context; they must not reduce judgement strength",
+            "formal_judgement_slices_require": "same_model_as_lead_agent_required",
+            "must_inherit_lead_model": True,
+            "must_not_override_to_lower_model": True,
+            "fast_model_allowed_only_for": [
+                "file_mapping",
+                "path_inventory",
+                "format_or_schema_check",
+                "grep_like_lookup",
+            ],
+            "must_not_downshift_for": [
+                "severity_judgement",
+                "cross_module_consistency",
+                "statistical_validity",
+                "high_risk_module_assessment",
+                "final_arbitration",
+            ],
+            "required_overlap_context": [
+                "report_summary",
+                "conclusion_sections",
+                "figure_table_index",
+                "mechanical_check_summary",
+                "case_manifest",
+                "slice_neighbor_dependencies",
+            ],
+            "lead_global_review_required": True,
+        },
+        "compact_retry_policy": {
+            "required_action": "split_scope_again_before_retry",
+            "must_not_retry_same_scope": True,
+            "split_axes": ["report_section", "analysis_module", "figure_range", "file_group", "issue_cluster"],
+        },
+        "slices": [item for group in by_agent.values() for item in group],
+        "by_agent": by_agent,
+        "merge_outputs": {
+            "A": str(review_dir / "agent_results" / "agent_a_result.json"),
+            "B": str(review_dir / "agent_results" / "agent_b_result.json"),
+            "C": str(review_dir / "agent_results" / "agent_c_result.json"),
+        },
+    }
+
+
 def build_convergence_guide(review_dir: Path, precheck: dict) -> str:
     """构造 Lead Auditor 收敛阶段指引"""
+    slice_lines = "\n".join(
+        f"- `{slice_prompt_path(review_dir, spec)}` → `{slice_output_path(review_dir, spec)}`"
+        for spec in SLICE_SPECS
+    )
     guide = f"""# 三路收敛审核 — Lead Auditor 收敛指引
 
 ## 流程概览
 
 ```
-┌──────────────────────────────────────────────┐
-│ 1. 启动 3 个子代理（使用 agent_prompts/ 中的 prompt）│
-│ 2. 收集 3 份 JSON 审核结果                        │
-│ 3. 运行收敛比对脚本 convergence_compare.py        │
-│ 4. 如有分歧，启动迭代收敛（最多 3 轮）             │
-│ 5. 生成最终报告                                   │
-└──────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│ 1. 按 agent_slice_manifest.json 分批启动小切片 Sub-Agent │
+│ 2. 每个切片写入 agent_results/slices/*.json              │
+│ 3. 用 agent_a/b/c_prompt.md 汇总同路切片为 3 份 JSON       │
+│ 4. 运行 convergence_compare.py 做三路收敛                 │
+│ 5. 如有分歧，仅对分歧点启动小切片复核                     │
+│ 6. 生成最终报告                                           │
+└─────────────────────────────────────────────────────────┘
 ```
 
-## 步骤 1：启动子代理
+## Remote Compact 防护硬规则
 
-分别用以下 prompt 文件启动 3 个独立子代理：
-- `{review_dir / 'agent_prompts' / 'agent_a_prompt.md'}` → Agent A (D1+D5)
-- `{review_dir / 'agent_prompts' / 'agent_b_prompt.md'}` → Agent B (D2+D3)
-- `{review_dir / 'agent_prompts' / 'agent_c_prompt.md'}` → Agent C (D6+统计)
+- 禁止把一个完整项目交给单个 Sub-Agent 一次性审核。
+- 每个切片只读自己的 prompt、指定路径和必要局部证据。
+- 每批最多并发 4 个切片；每批结束更新 checkpoint。
+- 所有切片完整结果必须落盘到 `agent_results/slices/`，聊天只返回短状态。
+- Lead 不直接吞入长报告、长日志、完整清单或大证据；正式审核证据由 subagent 落盘。
+- 正式判断型 Sub-Agent 必须使用与主 agent 相同的模型；如主 agent 为 high reasoning，判断型子代理也必须 high；fast/mini/explore 仅用于文件定位、清单、grep，不做严重度/统计/高风险裁定。
+- Lead 最终必须做全局一致性复核：覆盖缺口、slice 冲突、跨模块链条断裂、局部通过但整体不成立、未分配高风险模块。
+- 不要 `fork_context` 复制 leader 大上下文，除非处理极小项目且已在 manifest 中说明原因。
+- 如果任一 Sub-Agent 触发 remote compact/context loss，先继续拆分工作再重试，禁止原范围重跑。
 
-使用 `runSubagent` 工具，将 prompt 内容作为任务描述传入。
+## 步骤 1：启动小切片子代理
+
+先读取 `{review_dir / 'agent_prompts' / 'agent_slice_manifest.json'}`。
+按以下 prompt 启动小切片 Sub-Agent，建议每批 2-4 个：
+
+{slice_lines}
+
 这是正式审核默认流程；只要进入该脚本，就不再等待用户额外确认“三路”。
+但“三路”是收敛口径，不等于启动 3 个大 Sub-Agent。
 
-## 步骤 2：收集结果
+## 步骤 2：收集切片结果并汇总三路 JSON
 
-每个子代理返回 JSON，保存为：
+所有切片必须先保存到 `agent_results/slices/`。之后分别使用以下汇总 prompt：
 - `{review_dir / 'agent_results' / 'agent_a_result.json'}`
 - `{review_dir / 'agent_results' / 'agent_b_result.json'}`
 - `{review_dir / 'agent_results' / 'agent_c_result.json'}`
+
+汇总 prompt 文件：
+- `{review_dir / 'agent_prompts' / 'agent_a_prompt.md'}` → 只汇总 A 路 slice JSON
+- `{review_dir / 'agent_prompts' / 'agent_b_prompt.md'}` → 只汇总 B 路 slice JSON
+- `{review_dir / 'agent_prompts' / 'agent_c_prompt.md'}` → 只汇总 C 路 slice JSON
 
 ## 步骤 3：收敛比对
 
@@ -563,8 +937,26 @@ def main():
     # 创建输出目录
     prompt_dir = review_dir / 'agent_prompts'
     prompt_dir.mkdir(exist_ok=True)
+    slice_prompt_dir = prompt_dir / 'slices'
+    slice_prompt_dir.mkdir(exist_ok=True)
+    results_dir = review_dir / 'agent_results'
+    slice_results_dir = results_dir / 'slices'
+    results_dir.mkdir(exist_ok=True)
+    slice_results_dir.mkdir(exist_ok=True)
 
-    # 生成 3 个 Agent prompt
+    # 生成小切片 prompt 与 manifest
+    for spec in SLICE_SPECS:
+        prompt = build_slice_prompt(spec, review_dir, project_dir, precheck, report_excerpt)
+        out_path = slice_prompt_path(review_dir, spec)
+        out_path.write_text(prompt, encoding='utf-8')
+        print(f"  ✅ Slice {spec['id']} prompt: {out_path}")
+
+    slice_manifest = build_slice_manifest(review_dir)
+    slice_manifest_path = prompt_dir / 'agent_slice_manifest.json'
+    slice_manifest_path.write_text(json.dumps(slice_manifest, ensure_ascii=False, indent=2), encoding='utf-8')
+    print(f"  ✅ 小切片清单: {slice_manifest_path}")
+
+    # 生成 3 个 Agent 汇总 prompt
     agents = [
         ('A', _AGENT_A_EMPHASIS),
         ('B', _AGENT_B_EMPHASIS),
@@ -577,7 +969,7 @@ def main():
         )
         out_path = prompt_dir / f'agent_{agent_id.lower()}_prompt.md'
         out_path.write_text(prompt, encoding='utf-8')
-        print(f"  ✅ Agent {agent_id} prompt: {out_path}")
+        print(f"  ✅ Agent {agent_id} 汇总 prompt: {out_path}")
 
     # 生成收敛指引
     guide = build_convergence_guide(review_dir, precheck)
@@ -585,12 +977,11 @@ def main():
     guide_path.write_text(guide, encoding='utf-8')
     print(f"  ✅ 收敛指引: {guide_path}")
 
-    # 创建 agent_results 目录
-    (review_dir / 'agent_results').mkdir(exist_ok=True)
-
     print(f"\n  📂 输出目录: {prompt_dir}")
-    print(f"  📂 结果目录: {review_dir / 'agent_results'}")
-    print("\n  下一步: 使用 runSubagent 启动 3 个独立审核子代理")
+    print(f"  📂 小切片 prompt: {slice_prompt_dir}")
+    print(f"  📂 结果目录: {results_dir}")
+    print(f"  📂 小切片结果目录: {slice_results_dir}")
+    print("\n  下一步: 按 agent_slice_manifest.json 分批启动小切片子代理；不要启动 3 个大子代理")
     print("  参考: agent_prompts/convergence_guide.md")
 
 

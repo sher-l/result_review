@@ -1,14 +1,14 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-统一检查调度器（审核框架 v6.5核心）
+统一检查调度器（审核框架核心）
 
 协调所有检查器，按优先级自动执行并汇总全部问题：
 - P0级检查（最高优先级）
 - P1级检查（严重问题）
 - 其他检查
 
-作者: 审核框架 v6.5
+维护: result_review_framework
 创建日期: 2026-02-13
 """
 
@@ -22,6 +22,7 @@ import re
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+from base_project_checker import strip_non_audit_appendix
 from project_metadata import ProjectMetadata
 
 
@@ -47,6 +48,19 @@ ThresholdConsistencyChecker = None
 ModelConsistencyChecker = None
 ChineseProofreadingChecker = None
 ImageSimilarityChecker = None
+
+
+def _load_framework_version() -> str:
+    policy_path = Path(__file__).resolve().parents[1] / 'policy' / 'audit_policy.json'
+    try:
+        with open(policy_path, 'r', encoding='utf-8') as f:
+            policy = json.load(f)
+        return policy.get('framework_version', 'v7.1')
+    except Exception:
+        return 'v7.1'
+
+
+FRAMEWORK_VERSION = _load_framework_version()
 
 CHECKER_IMPORT_SPECS = [
     ('check_project_id_consistency', 'ProjectIDChecker', '项目编号检查器'),
@@ -234,7 +248,7 @@ class CheckOrchestrator:
     def _load_report_text(self) -> str | None:
         """缓存加载报告文本，避免多个 checker 重复解析 docx。"""
         from utils import find_report_text
-        return find_report_text(self.project_path)
+        return strip_non_audit_appendix(find_report_text(self.project_path))
 
     def run_all_checks(self, stop_on_fatal: bool = True) -> Dict:
         """
@@ -843,7 +857,7 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(
-        description='统一检查调度器 - 审核框架 v6.5',
+        description=f'统一检查调度器 - 审核框架 {FRAMEWORK_VERSION}',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:

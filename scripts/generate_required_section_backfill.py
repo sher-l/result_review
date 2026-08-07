@@ -1,12 +1,13 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Generate backfill blocks for required final report sections that are still missing.
+Generate backfill blocks for reader-facing final report sections that are still missing.
 
 This script reads final_report_lint.json and existing audit deliverables, then
 builds a machine-readable plan for sections that can be reconstructed from
-structured artifacts such as convergence_report.md/json, coverage_matrix.md,
-and mechanical_check_result.json.
+reader-facing structured artifacts. Internal convergence, mechanical-check and
+high-risk-module records remain in the audit dossier and are never backfilled
+into the final report.
 """
 
 from __future__ import annotations
@@ -212,11 +213,7 @@ def build_plan(review_dir: Path, lint_data: dict) -> dict:
     missing_sections = extract_missing_section_ids(lint_data)
     items = []
 
-    builders = {
-        "three_agent_convergence": build_three_agent_section,
-        "mechanical_disposition": build_mechanical_disposition_section,
-        "high_risk_modules": build_high_risk_modules_section,
-    }
+    builders = {}
 
     for section_id in missing_sections:
         builder = builders.get(section_id)

@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-自动检查流水线（审核框架 v6.5入口）
+自动检查流水线（审核框架入口）
 
 集成所有P0级检查器，自动执行预检查并汇总全部问题：
 1. 项目编号一致性检查 (FATAL级)
@@ -13,13 +13,15 @@
 
 软性评估：发现FATAL也继续检查，输出完整问题清单
 
-作者: 审核框架 v6.5
+维护: result_review_framework
 创建日期: 2026-02-13
 """
 
 import sys
 import json
 import shutil
+import subprocess
+import tempfile
 import zipfile
 import re
 from pathlib import Path
@@ -45,17 +47,22 @@ try:
         update_case_manifest,
         write_json,
     )
+    from framework_health_check import assert_framework_healthy
+    from policy_loader import load_policy
 except ImportError as e:
     print(f"错误: 无法导入模块: {e}")
     print(f"请确保在项目根目录下运行此脚本")
     sys.exit(1)
 
 
+FRAMEWORK_VERSION = load_policy().get("framework_version", "v7.1")
+
+
 class AutoAuditPipeline:
     """自动审核流水线"""
 
     def __init__(self, project_path: str, project_type: str = None, review_dir: str = None,
-                 source_archive_path: str | None = None, review_lane: str = "standard"):
+                 source_archive_path: str | None = None, review_lane: str | None = None):
         """
         初始化流水线
 
@@ -68,29 +75,70 @@ class AutoAuditPipeline:
         self.source_archive_path = Path(source_archive_path) if source_archive_path else None
         self.project_type = project_type or self._infer_project_type()
         self._custom_review_root = Path(review_dir) if review_dir else None
-        self.review_lane = review_lane
+        lane_policy = load_policy().get("review_lane_policy", {})
+        if not isinstance(lane_policy, dict):
+            lane_policy = {}
+        self.review_lane = review_lane or str(lane_policy.get("default_lane", "strict"))
         self.start_time = datetime.now()
         self.results = {}
         self.docx_only = False  # 自动检测后设置
 
     @staticmethod
     def normalize_project_input(project_input: Path) -> Path:
-        """支持传入 zip：自动解压到 raw/待审核/<项目编号> 并返回项目目录。"""
+        """解压压缩包并以原子移动方式落位到 raw/待审核/<项目编号>。"""
+        assert_framework_healthy()
         if project_input.is_dir():
             return project_input
 
-        if project_input.is_file() and project_input.suffix.lower() == '.zip':
+        if project_input.is_file() and project_input.suffix.lower() in {'.zip', '.rar', '.7z'}:
             workspace_root = Path(__file__).resolve().parents[2]
+            raw_root = workspace_root / 'raw'
             pending_root = workspace_root / 'raw' / '待审核'
             pending_root.mkdir(parents=True, exist_ok=True)
 
             project_id = extract_project_id(project_input.stem)
             target_dir = pending_root / project_id
-            target_dir.mkdir(parents=True, exist_ok=True)
+            if target_dir.exists():
+                raise FileExistsError(
+                    f"Refusing to extract into existing pending project directory: {target_dir}"
+                )
 
-            print(f"📦 检测到 ZIP，解压到: {target_dir}")
-            with zipfile.ZipFile(project_input, 'r') as zf:
-                zf.extractall(target_dir)
+            failed_root = raw_root / '解压失败'
+            failed_root.mkdir(parents=True, exist_ok=True)
+            staging_dir = Path(tempfile.mkdtemp(prefix=f"{project_id}_", dir=failed_root))
+
+            print(f"📦 检测到压缩包，临时解压到: {staging_dir}")
+            try:
+                if project_input.suffix.lower() == '.zip':
+                    with zipfile.ZipFile(project_input, 'r') as zf:
+                        zf.extractall(staging_dir)
+                else:
+                    seven_zip = shutil.which('7z') or shutil.which('7z.exe')
+                    if not seven_zip:
+                        raise FileNotFoundError(f"7z not found; cannot extract archive: {project_input}")
+                    completed = subprocess.run(
+                        [seven_zip, 'x', '-y', f'-o{staging_dir}', str(project_input)],
+                        capture_output=True,
+                        text=True,
+                        encoding='utf-8',
+                        errors='replace',
+                        timeout=120,
+                    )
+                    if completed.returncode != 0:
+                        raise RuntimeError(
+                            f"{(completed.stderr or completed.stdout).strip()}"
+                        )
+
+                if not any(staging_dir.iterdir()):
+                    raise RuntimeError("archive extraction produced no files")
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Archive extraction failed for {project_input}; partial files were preserved outside "
+                    f"raw/待审核 at {staging_dir}: {exc}"
+                ) from exc
+
+            staging_dir.rename(target_dir)
+            print(f"📦 解压完成，项目已落位: {target_dir}")
 
             children = [p for p in target_dir.iterdir() if p.name != '__MACOSX']
             if len(children) == 1 and children[0].is_dir():
@@ -140,7 +188,7 @@ class AutoAuditPipeline:
         archive = self.source_archive_path
         if archive is None or not archive.exists():
             return None
-        if archive.suffix.lower() != '.zip':
+        if archive.suffix.lower() not in {'.zip', '.rar', '.7z'}:
             return None
         if archive.parent.name != '待审核':
             return None
@@ -156,7 +204,7 @@ class AutoAuditPipeline:
     # 文件夹名关键词 → 项目类型映射（默认值，优先被 standards/disease_types.json 覆盖）
     _DEFAULT_TYPE_KEYWORDS = {
         '癌症': [
-            '癌', '瘤', '肉瘤', 'TCGA', '转录组+单细胞',
+            '癌', '瘤', '肉瘤', 'TCGA',
             'LIHC', 'PAAD', 'LUAD', 'LUSC', 'BRCA', 'STAD',
             'COAD', 'READ', 'KIRC', 'BLCA', 'HNSC', 'GBM',
             'OV', 'UCEC', 'THCA', 'PRAD', 'SKCM', 'ESCA',
@@ -213,8 +261,11 @@ class AutoAuditPipeline:
                 'report_path': 报告文件路径
             }
         """
+        # The library entry point must be guarded too; CLI callers are checked
+        # before archive normalization/extraction below.
+        assert_framework_healthy()
         print("\n" + "="*70)
-        print(" "*20 + "审核框架 v6.5 - 自动化检查流水线")
+        print(" "*20 + f"审核框架 {FRAMEWORK_VERSION} - 自动化检查流水线")
         print("="*70)
         print(f"\n项目路径: {self.project_path}")
         print(f"项目类型: {self.project_type or '自动检测'}")
@@ -753,7 +804,7 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(
-        description='自动检查流水线 - 审核框架 v6.5',
+        description=f'自动检查流水线 - 审核框架 {FRAMEWORK_VERSION}',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
@@ -792,8 +843,8 @@ def main():
                       help='报告输出目录（默认: 项目路径/check_reports/auto_audit）')
     parser.add_argument('--review-dir', '-r',
                       help='审核输出根目录（默认: result_review_report）')
-    parser.add_argument('--review-lane', choices=('standard', 'strict'), default='standard',
-                      help='视觉审核路线（standard=机器预筛+人工分层复核, strict=全量人工复核）')
+    parser.add_argument('--review-lane', choices=('standard', 'strict'), default=None,
+                      help='视觉审核路线（默认读取 canonical policy；standard=机器预筛+AI分层复核, strict=全量AI复核）')
     parser.add_argument('--auto-move-reviewed', dest='auto_move_reviewed', action='store_true',
                       help='兼容旧参数；归档已拆分到 archive_reviewed_project.py，当前不再由 auto_audit_pipeline 执行')
     parser.add_argument('--no-auto-move-reviewed', dest='auto_move_reviewed', action='store_false',
@@ -801,6 +852,15 @@ def main():
     parser.set_defaults(auto_move_reviewed=False)
 
     args = parser.parse_args()
+
+    # Check the framework before resolving an archive input, because resolving
+    # it may extract files.  A drifted framework must not create any project
+    # or review artifacts.
+    try:
+        assert_framework_healthy()
+    except RuntimeError as exc:
+        print(f"错误: {exc}", file=sys.stderr)
+        sys.exit(1)
 
     # 验证项目路径
     project_path = AutoAuditPipeline.normalize_project_input(Path(args.project_path))
@@ -826,13 +886,8 @@ def main():
         final_report_dir = pipeline.infer_final_report_dir()
         if final_report_dir is not None:
             html_ok = pipeline.ensure_html(str(final_report_dir))
-            html_path = None
             if html_ok:
-                project_id_match = re.search(r"\b\d{2}[A-Z]{3}\d{3}[A-Z]?\b", final_report_dir.name)
-                final_project_id = project_id_match.group(0) if project_id_match else final_report_dir.name
-                html_path = final_report_dir / f'{final_project_id}_audit_report.html'
-                summary = "最终审核报告和 HTML 已生成"
-                pipeline.send_completion_notification(final_project_id, final_report_dir, html_path, summary)
+                print("?? HTML ??????????? finalize_audit.py ?????????")
             if args.auto_move_reviewed:
                 print("ℹ️ auto_move_reviewed 已废弃；请显式运行 archive_reviewed_project.py")
         else:

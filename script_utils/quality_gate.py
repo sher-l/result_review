@@ -4,7 +4,7 @@
 质量评估模块（审核框架 v6.5）
 
 定义问题严重性级别和软性评估逻辑：
-- FATAL: 最高优先级问题，需要优先人工核对
+- FATAL: 最高优先级问题，需要优先 AI核对
 - CRITICAL: 严重问题，需重点处理
 - MAJOR: 较严重问题，影响报告质量
 - WARNING: 警告级别
@@ -153,10 +153,10 @@ class QualityGate:
         counts = self.count_by_severity()
 
         if counts[SeverityLevel.FATAL] > 0:
-            return False, f"🔴 发现{counts[SeverityLevel.FATAL]}个FATAL级问题，需优先人工核对，但自动审核不应中断"
+            return False, f"🔴 发现{counts[SeverityLevel.FATAL]}个FATAL级问题，需优先 AI核对，但自动审核不应中断"
 
         if counts[SeverityLevel.CRITICAL] > self.thresholds[SeverityLevel.CRITICAL]:
-            return False, f"🟠 发现{counts[SeverityLevel.CRITICAL]}个CRITICAL级问题（提示阈值：{self.thresholds[SeverityLevel.CRITICAL]}），需重点人工复核"
+            return False, f"🟠 发现{counts[SeverityLevel.CRITICAL]}个CRITICAL级问题（提示阈值：{self.thresholds[SeverityLevel.CRITICAL]}），需重点 AI复核"
 
         if counts[SeverityLevel.MAJOR] > self.thresholds[SeverityLevel.MAJOR]:
             return False, f"🟤 发现{counts[SeverityLevel.MAJOR]}个MAJOR级问题（提示阈值：{self.thresholds[SeverityLevel.MAJOR]}），建议逐项复核"

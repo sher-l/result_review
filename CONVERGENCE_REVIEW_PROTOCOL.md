@@ -3,9 +3,9 @@
 > 说明：本文件是三路收敛的展开参考。  
 > 当前是否启动三路、finding 需要哪些字段、哪些文件是必交付，先以 `policy/audit_policy.json` 与 `MASTER_PROMPT.md` 为准。
 
-> **版本**: v6.5
+> **版本**: v7.1
 > **创建日期**: 2026-04-02 | 更新: 2026-04-07
-> **状态**: ✅ 主线协议，v6.5: 三路收敛 Prompt 自动构造 + 收敛比对脚本
+> **状态**: ✅ 主线协议，v7.1：小切片 Sub-Agent + 语义 complete-link 收敛 + protected veto + PDF-only 图件交付
 > **前置依赖**: Round 0 Auto-Precheck + Layer 0 预解析必须先完成
 
 ---
@@ -32,20 +32,34 @@
 5. ✅ 机械检查已完成: `mechanical_check_result.json`（Layer 0 MC-001~MC-012）
 6. ✅ 预检查问题清单已生成
 7. ✅ 项目结果目录已确认可访问
-8. ✅ 已明确进入“正式审核”状态；此时三路 Sub-Agent 为默认必做步骤，不等待用户二次确认
+8. ✅ 已明确进入“正式审核”状态；此时“小切片 Sub-Agent → 三路汇总 → 收敛”为默认必做步骤，不等待用户二次确认
 
 ---
 
 ## 阶段一：初始独立审核（双轮）
 
-### 1.1 Sub-Agent 调度
+### 1.1 小切片 Sub-Agent 调度
 
-同时启动 3 个独立 Sub-Agent，每个 Agent 接收**相同的基础输入 + 差异化强化指令**：
+v6.7 起，**禁止**同时启动 3 个“大而全”的独立 Sub-Agent 来一次性审核完整项目。
+三路仍是最终收敛口径，但执行层改为多个窄切片：
+
+1. `scripts/launch_convergence_audit.py` 生成 `agent_prompts/agent_slice_manifest.json`；
+2. Lead 按 `agent_prompts/slices/*.md` 分批启动小切片 Sub-Agent；若任一 Sub-Agent 触发 remote compact/context loss，必须按章节/模块/图号范围/文件组/问题簇继续拆小后重试，禁止原范围重跑；
+3. Lead 只做监工、整合、仲裁和最终门禁；不得在主线程吞入长报告、长日志、完整清单或大证据；
+4. 每个判断型切片必须使用与主 agent 相同的模型；如主 agent 为 high reasoning，判断型子代理也必须 high；fast/mini/explore 只用于定位、清单、schema、grep；
+5. 每个切片只审一个窄范围，并写入 `agent_results/slices/*.json`；
+6. 再由 `agent_a_prompt.md`、`agent_b_prompt.md`、`agent_c_prompt.md` 汇总同路切片；
+7. Lead 复核覆盖缺口、slice 冲突、跨模块链条断裂、局部通过但整体不成立、未分配高风险模块；
+8. 最终仍输出 `agent_a_result.json`、`agent_b_result.json`、`agent_c_result.json` 给 `convergence_compare.py`。
+
+每个小切片只接收**最小必要输入 + 明确 stop condition**。但“最小必要”不能删掉判断所需的重叠上下文：摘要/结论、Figure/Table 索引、机械检查摘要、case_manifest、相邻依赖模块。高风险模块切片必须保留模块级完整上下文，不能按单文件过窄拆分。
+
+每个小切片只接收：
 
 | 输入项 | 来源 |
 |--------|------|
 | 项目路径 | Lead Auditor 确认 |
-| 报告文本 | `report_text.txt`（含内联图片标记） |
+| 报告文本 | `report_text.txt` 的局部行段；prompt 中只嵌入短概览 |
 | 报告结构索引 | `report_structure.json`（章节树、图表引用、基因名、数据库、数字上下文） |
 | 项目结构索引 | `project_structure.json`（模块、代码文件、包列表、参数索引、GEO 引用、项目 ID） |
 | 机械检查结果 | `mechanical_check_result.json`（MC-001~MC-012 确定性问题） |
@@ -53,19 +67,21 @@
 | 审核框架 | **CORE_RULES.md**（精简版）+ WORKFLOW_MODULE_CHECKS.md + STATISTICS_REFERENCE.md |
 | 视觉审核结果 | `figure_audit.md`（Layer 2 产物，必要输入） |
 | 结果目录清单 | 递归 `list_dir` 结果 |
-| 差异化指令 | 每个 Agent 的强化维度指令（见下方 1.1.1） |
+| 差异化指令 | 每个切片的窄范围问题（见 `agent_slice_manifest.json`） |
 
 **隔离要求**：
-- ❌ 每个 Sub-Agent **不得共享**审核中间产物
-- ❌ 每个 Sub-Agent **不得参考**其他 Agent 的输出
-- ✅ 每个 Sub-Agent **独立产出**全套中间产物
-- ✅ 每个 Sub-Agent 必须先阅读 `mechanical_check_result.json`，但不能直接照单全收，必须区分“保留问题”和“疑似误报”
+- ❌ 每个小切片 Sub-Agent **不得扩审**到完整项目
+- ❌ 每个小切片 Sub-Agent **不得参考**其他切片的输出
+- ❌ 不得 `fork_context` 复制 Lead 全量上下文，除非项目被明确标记为 very_small
+- ✅ 每个小切片 Sub-Agent **独立产出**自己的 JSON 文件
+- ✅ 每批最多并发 4 个切片；每批结束写 checkpoint
+- ✅ 机械检查问题必须被处置，但可分配给相应切片后再由同路汇总
 
 ### 1.1.1 Sub-Agent 差异化强化
-> **v6.5 升级**：`scripts/launch_convergence_audit.py` 已自动构造包含完整框架规则 + 预检查结果 + 差异化强化指令的 prompt，无需手工编写 Sub-Agent Prompt。
-> 运行：`python launch_convergence_audit.py <review_dir>` → 输出 `agent_prompts/agent_{a,b,c}_prompt.md`
+> **v6.7 升级**：`scripts/launch_convergence_audit.py` 已自动构造小切片 prompt、三路汇总 prompt 和切片 manifest，无需手工拆分。
+> 运行：`python launch_convergence_audit.py <review_dir>` → 输出 `agent_prompts/agent_slice_manifest.json`、`agent_prompts/slices/*.md`、`agent_prompts/agent_{a,b,c}_prompt.md`
 
-每个 Sub-Agent 必须做**完整审核**，但各自有不同的**强化维度**，确保三路审核不会命中相同盲区：
+每路由多个小切片覆盖不同强化维度；**单个 Sub-Agent 不再做完整审核**：
 
 | Agent | 强化维度 | 视角 | 特殊任务 |
 |-------|---------|------|----------|
@@ -99,11 +115,15 @@
 4. 检查 project_structure.json 中的 geo_references，确认代码引用的所有 GEO 数据集都在报告中有说明
 ```
 
-### 1.2 每个 Sub-Agent 的双轮审核
+### 1.2 每个小切片的审核与落盘
 
-#### 第一轮：深度审查
+#### 第一轮：切片审查
 
-每个 Sub-Agent 必须按照 WORKFLOW.md 和 CHECKLIST_TEMPLATE.md 完成**完整审核**，具体包括：
+每个小切片只完成自己的窄范围问题，并把完整结果写到 `agent_results/slices/*.json`。
+聊天返回只允许包含：完成/阻塞、输出路径、发现数量、最高严重度、阻断项。
+长日志、grep 输出、表格统计必须写入 `.omx/logs/`，不得贴入对话上下文。
+
+切片合并后，三路汇总 JSON 仍必须覆盖以下框架要求：
 
 **必做检查项**（继承框架现有要求）：
 
@@ -139,7 +159,7 @@
    - 编号连续无跳号、子标签字母连续
 
 9. **流程图 vs 交付物一致性**（有流程图时必做）
-   - 获取流程图内容（人工判读或通过提取的图片识别）
+   - 获取流程图内容（AI判读或通过提取的图片识别）
    - 列出流程图中所有分析步骤 → 逐一核对方法段/结果段/交付物
    - 不允许直接采信自动检查结论而跳过复核
 
@@ -198,7 +218,7 @@
 
 ### 2.1 结果收集
 
-Lead Auditor 收集 3 个 Sub-Agent 的最终结论，按以下维度对齐：
+Lead Auditor 收集 A/B/C 三路汇总结果（这些结果必须来自已验收的 slice JSON），按以下维度对齐：
 
 | 比对维度 | 说明 |
 |----------|------|
@@ -343,7 +363,7 @@ Lead Auditor 收集 3 个 Sub-Agent 的最终结论，按以下维度对齐：
 
 当以下所有条件**同时满足**时，流程终止：
 
-- ✅ 3 个 Sub-Agent 的结论**完全一致**（共识率 = 100%）
+- ✅ A/B/C 三路汇总结论**完全一致**（共识率 = 100%）
 - ✅ 无新增问题被发现
 - ✅ 无分歧项存在
 - ✅ 所有覆盖差异项已补齐
@@ -593,12 +613,12 @@ Layer 0: 预解析 + 机械检查
     │
     ▼
 ┌─────────────────────────────────────────────┐
-│  Round 2+3: Layer 3 三路差异化收敛审核       │
-│  ├── 阶段一: 3×差异化独立双轮审核            │
-│  │   ├── Agent A: 覆盖+证据强化              │
-│  │   ├── Agent B: 数字+一致性强化            │
-│  │   └── Agent C: 方法+统计强化              │
-│  │   (输入含 figure_audit.md)                   │
+│  Round 2+3: Layer 3 小切片差异化收敛审核     │
+│  ├── 阶段一: 多个窄范围 slice JSON 落盘       │
+│  │   ├── A路汇总: 覆盖+证据强化              │
+│  │   ├── B路汇总: 数字+一致性强化            │
+│  │   └── C路汇总: 方法+统计强化              │
+│  │   (输入含必要 figure_audit 摘要)           │
 │  ├── 阶段二: 交叉比对                       │
 │  ├── 阶段三: 迭代收敛（0-3 轮）             │
 │  └── 终止 → 合并输出                        │
@@ -616,17 +636,17 @@ Round 5 (Layer 4): Lead Auditor 源文本+视觉复核 → 排除假阳性 → �
 | 原有角色 | 收敛协议中的映射 |
 |----------|-----------------|
 | Auto-Check Coordinator | 保留：负责 Round 0 预检查 |
-| code-reviewer + code-validator | → 融入每个 Sub-Agent 的代码审查维度 |
-| report-auditor + data-verifier | → 融入每个 Sub-Agent 的内容审查维度 |
+| code-reviewer + code-validator | → 融入对应方法/代码小切片与 C 路汇总 |
+| report-auditor + data-verifier | → 融入覆盖、事实、一致性小切片与 A/B 路汇总 |
 | Lead Auditor | 保留：协调收敛流程 + 最终裁决 |
 
-每个 Sub-Agent 是**全栈审核员**，同时承担代码审查和内容审查职责，确保独立性。
+每个小切片 Sub-Agent 只承担 `agent_prompts/slices/*.md` 指定的窄范围；A/B/C 是汇总路由，不是 3 个“大而全”全栈审核员。
 
 ### 与 MASTER_PROMPT.md 的关系
 
-- 每个 Sub-Agent 必须遵循 MASTER_PROMPT.md 的优先级顺序（覆盖 > 事实 > 一致性 > 文件 > 证据 > 统计）
-- 每个 Sub-Agent 必须遵循"逐分析点闭环"原则
-- 每个 Sub-Agent 必须遵循证据充分性判定规则
+- 每个小切片 Sub-Agent 必须遵循 MASTER_PROMPT.md 的优先级顺序（覆盖 > 事实 > 一致性 > 文件 > 证据 > 统计），但只在指定切片范围内执行
+- 每个小切片 Sub-Agent 必须遵循"逐分析点闭环"原则，并将完整发现写入指定 JSON
+- 每个小切片 Sub-Agent 必须遵循证据充分性判定规则；聊天返回仅保留状态、路径和阻断项
 
 ---
 
@@ -733,6 +753,6 @@ Round 3 最终报告汇总完成后、生成最终 HTML 之前。
 
 ---
 
-**版本**: v6.5
-**创建日期**: 2026-04-02 | 更新: 2026-04-17
+**版本**: v7.1
+**创建日期**: 2026-04-02 | 更新: 2026-07-30
 **维护者**: GitHub Copilot

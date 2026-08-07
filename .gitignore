@@ -2,7 +2,6 @@
 __pycache__/
 *.py[cod]
 *.pyo
-*.pyd
 
 # pytest
 .pytest_cache/
@@ -14,5 +13,6 @@ Thumbs.db
 # IDE
 .vscode/settings.json
 
-# Local config
+# Local notification credentials
 config/notification_config.json
+config/*.local.*

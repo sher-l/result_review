@@ -240,7 +240,7 @@ Select-String -Path "CODE/*.R" -Pattern "GSE[0-9]"
 ```python
 # Step 1: 从报告中提取数字
 # Step 2: 定位对应文件
-# Step 3: 用代码统计（不要人工数！）
+# Step 3: 用代码统计（不要手数！）
 # Step 4: 对比差异
 # Step 5: 差异>5%记录，>20%标记严重问题
 ```

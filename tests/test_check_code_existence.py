@@ -77,6 +77,10 @@ class TestNoCode:
         result = checker.check_all()
         # 应检测到缺少代码
         assert result['failed_checks'] > 0 or len(result.get('issues', [])) > 0 or len(result.get('warnings', [])) > 0
+        code_warnings = [w for w in result.get('warnings', []) if w.get('category') == '代码缺失']
+        assert code_warnings
+        assert code_warnings[0]['severity'] == 'WARNING'
+        assert 'CRITICAL' not in {i.get('severity') for i in result.get('issues', []) if i.get('category') == '代码缺失'}
 
 
 class TestImageOnlyModuleRemoved:

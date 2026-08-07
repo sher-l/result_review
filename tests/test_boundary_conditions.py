@@ -15,7 +15,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / 'script_utils'))
 
-from base_project_checker import BaseProjectChecker
+from base_project_checker import BaseProjectChecker, strip_non_audit_appendix
 from check_data_flow import DataFlowValidator
 from check_figure_integrity import FigureIntegrityChecker
 from check_ml_anomaly import MLAnomalyChecker
@@ -49,6 +49,29 @@ class TestEmptyProject:
         checker = BaseProjectChecker(empty_project)
         result = checker.load_report_text()
         assert result is None or result == ''
+
+    def test_strip_non_audit_appendix_after_references(self):
+        text = "\n".join([
+            "结果",
+            "参考文献",
+            "[1] reference",
+            "公司介绍",
+            "服务领域",
+        ])
+        trimmed = strip_non_audit_appendix(text)
+        assert "公司介绍" not in trimmed
+        assert "服务领域" not in trimmed
+        assert "[1] reference" in trimmed
+
+    def test_strip_non_audit_appendix_does_not_trim_body_mentions(self):
+        text = "\n".join([
+            "结果",
+            "公司介绍这个变量用于实验分组说明",
+            "参考文献",
+            "[1] reference",
+        ])
+        trimmed = strip_non_audit_appendix(text)
+        assert "公司介绍这个变量用于实验分组说明" in trimmed
 
     def test_data_flow_empty(self, empty_project):
         checker = DataFlowValidator(empty_project)

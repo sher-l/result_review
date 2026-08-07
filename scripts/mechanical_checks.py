@@ -34,6 +34,9 @@ MAJOR = 'MAJOR'
 WARNING = 'WARNING'
 INFO = 'INFO'
 
+REFERENCE_MARKERS = ('参考文献', 'References')
+APPENDIX_STOP_MARKERS = ('公司介绍', '服务领域', '联系我们')
+
 
 def _find_matching_dirs(project_dir: Path, keywords: list[str]) -> list[Path]:
     matches = []
@@ -60,6 +63,36 @@ def _looks_like_deg_result_table(data_file: dict) -> bool:
         'adj.p.val', 'adj_p_val', 'fdr', 'regulation', 'direction'
     }
     return any(col in deg_markers for col in header)
+
+
+def _trim_non_audit_appendix_lines(report_lines: list[str]) -> list[str]:
+    """Ignore default company promo pages that appear after references."""
+    if not report_lines:
+        return report_lines
+
+    report_text = '\n'.join(report_lines)
+    reference_index = -1
+    reference_marker = ''
+    for marker in REFERENCE_MARKERS:
+        idx = report_text.rfind(marker)
+        if idx > reference_index:
+            reference_index = idx
+            reference_marker = marker
+
+    if reference_index == -1:
+        return report_lines
+
+    search_start = reference_index + len(reference_marker)
+    stop_positions = []
+    for marker in APPENDIX_STOP_MARKERS:
+        idx = report_text.find(marker, search_start)
+        if idx != -1:
+            stop_positions.append(idx)
+
+    if not stop_positions:
+        return report_lines
+
+    return report_text[:min(stop_positions)].splitlines()
 
 
 def check_figure_mismatches(structure: dict) -> list[dict]:
@@ -930,7 +963,7 @@ def check_delivery_completeness(proj_struct: dict, structure: dict) -> list[dict
     """MC-014: 交付完整性检测
 
     检查：
-    1. 零代码文件交付（项目有多个分析模块但无代码 → CRITICAL）
+    1. 零代码文件交付（项目有多个分析模块但无代码 → WARNING）
     2. 模块缺少数据文件（有代码但无 CSV/数据文件 → WARNING）
     """
     issues = []
@@ -942,9 +975,9 @@ def check_delivery_completeness(proj_struct: dict, structure: dict) -> list[dict
     if total_code == 0 and total_modules > 0:
         issues.append({
             'code': 'MC-014',
-            'severity': CRITICAL,
+            'severity': WARNING,
             'message': f"项目包含 {total_modules} 个分析模块，但未交付任何代码文件",
-            'detail': '缺少代码导致分析结果完全不可复现，应要求补充所有 R/Python 脚本',
+            'detail': '代码未提供仅作为 WARNING；应要求补充 R/Python 脚本以提升可复现性',
         })
 
     # 2. 模块无数据文件检测
@@ -997,6 +1030,7 @@ def check_deg_table_type(report_lines: list[str], proj_struct: dict) -> list[dic
 def check_high_risk_module_consistency(report_lines: list[str], structure: dict, proj_struct: dict, project_dir: Path) -> list[dict]:
     """MC-016: 高风险模块正文-文件-图件一致性检查。"""
     issues = []
+    report_lines = _trim_non_audit_appendix_lines(report_lines)
     report_text = '\n'.join(report_lines)
     image_lines = [marker.get('line', 0) for marker in structure.get('image_markers', [])]
 
@@ -1033,9 +1067,9 @@ def check_high_risk_module_consistency(report_lines: list[str], structure: dict,
         ):
             issues.append({
                 'code': 'MC-016',
-                'severity': CRITICAL,
+                'severity': WARNING,
                 'message': "报告包含分子对接模块，但交付代码中未识别到对接脚本",
-                'detail': "高风险模块有结果描述但无代码交付，不能直接视为可复现",
+                'detail': "代码未提供仅作为 WARNING；可复现性需结合参数、输入、原始输出等证据继续复核",
             })
         if ('分子动力学' in report_text or 'md模拟' in report_text.lower() or 'gromacs' in report_text.lower()) and not any(
             any(keyword in path for keyword in ('md', 'gromacs', 'dynamics', 'molecular_dynamics'))
@@ -1043,9 +1077,9 @@ def check_high_risk_module_consistency(report_lines: list[str], structure: dict,
         ):
             issues.append({
                 'code': 'MC-016',
-                'severity': CRITICAL,
+                'severity': WARNING,
                 'message': "报告包含分子动力学模块，但交付代码中未识别到 MD 脚本",
-                'detail': "高风险模块有结果描述但无代码交付，不能直接视为可复现",
+                'detail': "代码未提供仅作为 WARNING；可复现性需结合参数、输入、原始输出等证据继续复核",
             })
 
     return issues

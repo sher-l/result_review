@@ -18,6 +18,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--status", required=True, help="completed / blocked / failed")
     parser.add_argument("--summary", default="")
     parser.add_argument("--config", default="")
+    parser.add_argument("--html-path", default="", help="Optional local HTML report path to upload as a notification file.")
+    parser.add_argument(
+        "--formal-audit",
+        action="store_true",
+        help="Allow Enterprise WeChat only for a real/formal audit completion notification.",
+    )
     parser.add_argument(
         "--meta",
         action="append",
@@ -42,12 +48,23 @@ def parse_meta(items: list[str]) -> dict[str, str]:
 
 def main() -> int:
     args = parse_args()
+    if args.task_type.strip().lower() == "audit" and args.status.strip().lower() == "completed":
+        print(
+            "Direct audit completion notification is disabled. "
+            "Use finalize_audit.py so the formal delivery manifest and receipt are bound."
+        )
+        return 1
+    metadata = parse_meta(args.meta)
+    if args.html_path:
+        metadata["HTML"] = args.html_path
+    if args.formal_audit:
+        metadata["formal_audit"] = "true"
     ok, message = send_notification(
         task_type=args.task_type,
         task_name=args.task_name,
         status=args.status,
         summary=args.summary,
-        metadata=parse_meta(args.meta),
+        metadata=metadata,
         config_arg=args.config,
     )
     print(message)

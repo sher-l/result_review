@@ -1,6 +1,6 @@
 {
-  "framework_version": "v6.6",
-  "updated_at": "2026-04-21",
+  "framework_version": "v7.1",
+  "updated_at": "2026-08-04",
   "mode": "formal_audit",
   "canonical_entrypoints": [
     "README.md",
@@ -15,6 +15,7 @@
     "CHECKLIST_TEMPLATE.md",
     "WORKFLOW_MODULE_CHECKS.md",
     "STATISTICS_REFERENCE.md",
+    "report_templates/project_config_template.json",
     "lessons/",
     "archive/"
   ],
@@ -42,7 +43,174 @@
     "must_export_html_after_markdown": true,
     "must_finalize_via_finalize_audit": true,
     "must_auto_archive_after_finalize": true,
-    "must_archive_only_after_publish_success": true
+    "must_archive_only_after_publish_success": true,
+    "must_reject_no_auto_archive": true,
+    "must_read_lesson_bank_before_audit": true,
+    "must_update_lesson_bank_after_audit": true,
+    "must_prioritize_lesson_bank_matches": true,
+    "must_use_small_slice_subagents": true,
+    "must_persist_slice_agent_outputs": true,
+    "must_checkpoint_between_slice_batches": true,
+    "must_not_launch_monolithic_subagents": true,
+    "must_record_subagent_supervision_summary": true,
+    "must_gate_finalize_on_subagent_supervision": true,
+    "must_prepare_before_sealed_finalize": true,
+    "must_write_final_decision_contract": true,
+    "must_validate_audit_contract_before_publish": true,
+    "must_write_visual_audit_result": true,
+    "must_prevent_duplicate_completion_notification": true,
+    "must_bind_formal_delivery_artifacts": true
+  },
+  "audit_contract_policy": {
+    "schema_version": "1.0",
+    "mode": "enforce",
+    "decision_json": "final_decision.json",
+    "validation_json": "audit_contract_validation.json",
+    "manifest_schema_version": "1.1",
+    "audit_contract_version": "1.0",
+    "allowed_verdict_release_pairs": {
+      "合格": "ALLOW",
+      "有条件合格": "CONDITIONAL",
+      "不合格": "BLOCK"
+    },
+    "required_severity_levels": [
+      "FATAL",
+      "CRITICAL",
+      "MAJOR",
+      "WARNING",
+      "INFO"
+    ],
+    "formal_completion_requires_unresolved_count": 0,
+    "source_paths_must_be_review_relative": true,
+    "source_hash_algorithm": "sha256",
+    "finalize_must_not_modify_confirmed_sources": true,
+    "formal_finalize_cli_mode_override_allowed": false,
+    "shadow_exit_code_on_would_block": 0,
+    "enforce_exit_code_on_block": 1
+  },
+  "notification_idempotency_policy": {
+    "mode": "enforce",
+    "receipt_json": "completion_notification_receipt.json",
+    "states": [
+      "pending",
+      "sent",
+      "failed",
+      "unknown"
+    ],
+    "idempotency_components": [
+      "decision_sha256",
+      "body_sha256",
+      "channel"
+    ],
+    "skip_send_when_matching_receipt_is_sent": true,
+    "block_automatic_resend_when_status_unknown": true,
+    "block_when_receipt_decision_hash_differs": true,
+    "archive_requires_sent_receipt": true,
+    "pre_notification_gate_failures_are_local_only": true,
+    "test_network_policy": "deny_all_outbound_notifications"
+  },
+  "visual_closure_policy": {
+    "mode": "enforce",
+    "result_json": "visual_audit_result.json",
+    "inventory_scope": [
+      "report_embedded_assets",
+      "project_delivery_figures"
+    ],
+    "recognized_unsupported_formats": [
+      ".emf",
+      ".wmf"
+    ],
+    "required_count_invariant": "asset_total=reviewed+skipped+unsupported",
+    "require_unaccounted_zero": true,
+    "require_reason_for_skipped_or_unsupported": true,
+    "high_risk_unsupported_requires_derivative_or_alternative_evidence": true,
+    "machine_flag_zero_is_not_human_completion": true
+  },
+  "professional_contract_policy": {
+    "arbitration_schema_version": "2.0",
+    "arbitration_mode": "enforce",
+    "validation_json": "professional_contract_validation.json",
+    "checker_modes": {
+      "dataset_scope": "shadow",
+      "statistical_flow": "shadow",
+      "method_code": "shadow",
+      "ml_lineage": "shadow"
+    },
+    "structured_artifacts": {
+      "dataset_scope": "dataset_scope_matrix.json",
+      "statistical_flow": "statistical_flow_graph.json",
+      "method_code": "method_code_matrix.json",
+      "ml_lineage": "ml_lineage.json"
+    },
+    "semantic_merge_tuple": [
+      "module",
+      "claim",
+      "error_mechanism",
+      "evidence_object",
+      "repair_path"
+    ],
+    "merge_linkage": "complete_link",
+    "duplicate_formal_finding_gate": {
+      "mode": "enforce",
+      "rule": "两条正式发现只要共享同一证据定位，或 error_mechanism 与 repair_path 同时相同（即使定位不同），就必须在正式编号前逐对裁定并归并为一个 canonical finding；如确为独立问题，须在 independence_decisions 中列出实际不同的 module/claim/evidence_object，并分别引用两条 canonical finding 的独立证据。未归并且无充分独立性证据的候选项使仲裁合同校验失败。"
+    },
+    "final_report_binding_gate": {
+      "mode": "enforce",
+      "rule": "leader_confirmed 后，final_review_report.md 中每个 F-ID 必须经 finding_key 交叉表唯一绑定到 retained canonical finding；reject/revoked 原始发现不得进入正式问题链，严重度、定位/证据和整改要求必须完整。"
+    },
+    "protected_merge_vetoes": [
+      "dataset_identity",
+      "qc_count_invariant",
+      "cell_identity_translation",
+      "validation_leakage",
+      "method_implementation_mismatch",
+      "high_risk_provenance",
+      "figure_identity"
+    ],
+    "automated_professional_checks_emit_candidates_only": true
+  },
+  "lesson_bank_policy": {
+    "canonical_dir": "lessons/",
+    "read_before_audit": [
+      "LESSONS_LEARNED.md",
+      "patterns/"
+    ],
+    "update_targets": [
+      "LESSONS_LEARNED.md",
+      "LESSONS_LEARNED_<项目编号>.md",
+      "patterns/*.md"
+    ],
+    "required_entry_fields": [
+      "错误类型",
+      "具体表现",
+      "触发场景",
+      "证据依据",
+      "正确标准",
+      "下次审核提醒",
+      "严重程度",
+      "规则建议"
+    ],
+    "pre_audit_rule": "审核前必须读取 lessons/ 错题集索引和相关模式，把命中的相似内容列为重点复核项。",
+    "post_audit_rule": "审核结束后必须把本次典型错误点、触发场景、证据依据、正确标准、下次审核提醒和可执行规则建议沉淀到错题集；若规则建议明确且证据充分，应同步更新对应 patterns/*.md、索引或政策文档，不能只留待办。",
+    "reuse_rule": "后续审核其他项目时，遇到与错题集相同或相近的内容必须重点复核，但必须结合当前项目证据独立判断，不能机械套用历史结论。",
+    "rule_suggestion_policy": {
+      "must_capture_rule_recommendation": true,
+      "apply_when_actionable": true,
+      "actionable_definition": "规则建议能归入既有 pattern 或形成明确触发条件，且不会扩大到无证据场景。",
+      "update_targets": [
+        "lessons/LESSONS_LEARNED.md",
+        "lessons/patterns/*.md",
+        "policy/audit_policy.json",
+        "generated docs"
+      ],
+      "do_not_apply_when": "仅为个案备注、证据不足或会改变正式审核硬门禁时，先写入项目级 lessons 并标注待复核。"
+    },
+    "required_project_artifacts": [
+      "wrong_question_set.md",
+      "framework_optimization_notes.md"
+    ],
+    "completion_gate_rule": "正式审核完成、finalize、归档或正式通知前，项目审核目录必须存在 wrong_question_set.md 和 framework_optimization_notes.md；缺任一文件时 final_report_linter/完成门禁必须失败，主 agent 不得宣称 completed。",
+    "framework_optimization_rule": "审核后必须明确记录框架/agent/策略应如何加固；若无可执行改动，也必须在 framework_optimization_notes.md 写明不改的证据和理由，不能省略该文件。"
   },
   "required_precheck_files": [
     "report_text.txt",
@@ -61,6 +229,10 @@
     "convergence_report.md",
     "arbitration_queue.json",
     "final_review_report.md",
+    "subagent_supervision_summary.json",
+    "subagent_supervision_gate.json",
+    "wrong_question_set.md",
+    "framework_optimization_notes.md",
     "final_report_lint.json",
     "audit_state.json"
   ],
@@ -68,21 +240,88 @@
     "audit_conclusion": [
       "审核结论"
     ],
+    "blocking_issues": [
+      "提交阻断问题"
+    ],
     "analysis_table": [
-      "逐分析点审核结果",
-      "审核结果表"
-    ],
-    "three_agent_convergence": [
-      "三路",
-      "收敛"
-    ],
-    "mechanical_disposition": [
-      "机械",
-      "处置"
-    ],
-    "high_risk_modules": [
-      "高风险模块"
+      "逐分析点审核结果"
     ]
+  },
+  "final_report_display_policy": {
+    "analysis_navigation": {
+      "section_marker": "逐分析点审核结果",
+      "visible_in_reader_html": false,
+      "purpose": "保留为结构化审核覆盖底稿；HTML 读者视图不再单独展示，避免与正式问题导航重复。"
+    },
+    "adjudication_reason_index": {
+      "section_marker": "裁定标准与核定理由索引",
+      "before_section_marker": "提交阻断问题",
+      "expanded_by_default": true,
+      "purpose": "作为正式问题导航展示审核结果、错误点与核定理由；默认展开，样式与模块文件计数一致。"
+    }
+  },
+  "final_report_depth_policy": {
+    "enabled": true,
+    "core_section_marker": "提交阻断问题",
+    "secondary_section_marker": "其他已裁定问题",
+    "max_core_issues": 5,
+    "minimum_core_issues_for_reject": 1,
+    "secondary_issue_heading_prefix": "S-",
+    "secondary_section_required": false,
+    "secondary_issue_requires_detail_when_present": true,
+    "required_issue_labels": [
+      "错误点",
+      "原报告位置",
+      "原文短句",
+      "交付证据",
+      "修订要求"
+    ],
+    "child_error_heading_prefix": "具体错误",
+    "require_child_errors": true,
+    "require_indexed_finding_detail_coverage": true,
+    "child_required_labels": [
+      "错误点",
+      "原报告位置",
+      "原文短句",
+      "交付证据",
+      "修订要求"
+    ],
+    "reader_forbidden_internal_locator_pattern": "report_text.txt:Lxx",
+    "impact_max_sentences": 0,
+    "rule": "最终报告先呈现不超过 5 个真正改变提交、关键结论或独立复现能力的核心问题；该上限只限制顶层问题主题，不限制其下独立、可执行的错误。一个顶层问题下凡存在两个以上不同的错误机制、原报告位置或修订动作，必须拆为“具体错误 1、2……”，不得为了凑 5 项而合并。每个具体错误都必须写清实际做了什么、具体错在哪里、原报告 DOCX 的可搜索位置、原文短句、交付证据及修订要求；不得用泛泛的影响描述替代错误机制。正式报告禁止把 report_text.txt 行号作为读者证据：该行号只留在审核底稿。页码仅在固定渲染版本已核验时作为辅助，默认以“原 DOCX 文件名 + 章节/图表标题 + 原文短句”定位。其余已裁定问题以 S- 编号列示，也按同一子错误规则展开。收敛投票、机械检查、文件盘点、仲裁过程和未成立候选项属于审核底稿，不进入正式报告。"
+  },
+  "final_report_presentation_policy": {
+    "forbidden_heading_terms": [
+      "问题证据展开",
+      "分析点与问题清单一致性检查",
+      "三路独立审核",
+      "交叉收敛",
+      "审核分工",
+      "收敛投票",
+      "评分矩阵",
+      "机械检查处置",
+      "高风险模块复核",
+      "交付文件与代码盘点",
+      "正式裁定详情"
+    ],
+    "rule": "正式报告只呈现读者需要据以修订或判断提交结论的内容。过程性核验、仲裁、盘点和监督信息必须留在审核底稿，不得以章节或 HTML 自动卡片形式进入正式报告。"
+  },
+  "reader_html_presentation_policy": {
+    "mode": "enforce",
+    "profile": "reader-v3",
+    "baseline_id": "framework-concrete-error-cards-and-reader-projection-20260805",
+    "template": "report_templates/final_review_report_template.html",
+    "template_sha256_lf": "2190850fe4cff64c16dfd40e9f30acd391f87105fe7cfb04bd774942e20e8734",
+    "stylesheet_sha256_lf": "9ba9edea2c5adf01da4fc4886d707302ba98356d09d5b2052e54070e4aa8f325",
+    "script_sha256_lf": "9f54e1bf32825828406be42339eeaf4afc2e1dfc1527d83c4b4f9467b740dbd1",
+    "hash_normalization": "UTF-8 text with LF newlines",
+    "required_inventory_legend": "标灰说明：灰色行表示该模块/目录仅交付数据表/数据文件，或仅交付图件/PDF；标灰仅提示交付类型单一，不代表问题严重度。",
+    "hidden_internal_heading_terms": [
+      "finding_key → F-ID 交叉表",
+      "仲裁原始发现交叉索引",
+      "F-ID 绑定索引"
+    ],
+    "upgrade_rule": "任何读者视觉资产或固定页面骨架变更必须升级 presentation profile；不得仅刷新当前 profile 指纹。"
   },
   "audit_dimensions": [
     {
@@ -138,20 +377,45 @@
       "result_file",
       "code",
       "precheck"
-    ]
+    ],
+    "semantic_convergence_fields": [
+      "raw_finding_id",
+      "cluster_key",
+      "module",
+      "claim",
+      "error_mechanism",
+      "evidence_object",
+      "repair_path"
+    ],
+    "semantic_fields_mode": "shadow"
   },
   "review_lane_policy": {
-    "default_lane": "standard",
+    "default_lane": "strict",
     "allowed_lanes": [
       "standard",
       "strict"
     ],
-    "strict_mode_rule": "all_non_decoration_figures_require_human_review",
-    "standard_mode_rule": "human_review_only_for_high_risk_or_machine_flagged_figures"
+    "strict_mode_rule": "all_non_decoration_figures_require_ai_review",
+    "standard_mode_rule": "ai_review_only_for_high_risk_or_machine_flagged_figures"
+  },
+  "figure_delivery_policy": {
+    "preferred_primary_format": "pdf",
+    "pdf_only_allowed": true,
+    "warn_png_only_without_pdf": true,
+    "do_not_warn_pdf_without_png": true,
+    "alternative_render_sources": [
+      ".pdf",
+      ".pptx",
+      ".svg"
+    ],
+    "format_rule": "结果图件可以仅交付可渲染 PDF；不再因缺少 PNG 单独记问题。仅有 PNG/JPG 等位图且无 PDF 时记录 WARNING 或说明例外。文件不可渲染、损坏、错图或影响复核时仍按内容问题升级。若同一图件同时存在可读的 PDF、PPTX 或 SVG，单个派生 PNG 异常不得被表述为“图件/流程图不可读”；只有交付规范明确要求该派生格式时，才可单列为格式兼容性问题。"
   },
   "publish_archive_policy": {
     "canonical_html_pattern": "<project_id>_audit_report.html",
+    "archive_target_dir": "raw/已AI审核一次",
     "auto_archive_after_finalize": true,
+    "disable_no_auto_archive": true,
+    "finalize_fails_if_archive_missing": true,
     "publish_status_values": [
       "pending",
       "success",
@@ -159,14 +423,23 @@
     ],
     "archive_requires": [
       "publish_status=success",
-      "archive_approved=true"
+      "archive_approved=true",
+      "framework_health=passed",
+      "policy_binding=matched",
+      "leader_confirmed_contract=valid",
+      "professional_contracts=valid",
+      "visual_closure=passed",
+      "post_audit_learning_artifacts=present",
+      "formal_delivery_manifest=current",
+      "completion_notification_receipt=sent_and_current"
     ]
   },
   "high_risk_module_policy": {
     "target_modules": [
       "molecular_docking",
       "molecular_dynamics",
-      "virtual_knockout"
+      "virtual_knockout",
+      "graphban_virtual_screening"
     ],
     "required_dimensions": [
       "module_exists",
@@ -194,6 +467,17 @@
         "method_or_model_description",
         "structured_result_table",
         "conclusion_supporting_values"
+      ],
+      "graphban_virtual_screening": [
+        "compound_library_source_and_version",
+        "compound_identifiers",
+        "model_code_and_version",
+        "checkpoint_or_weights",
+        "inference_configuration",
+        "random_seed",
+        "structured_input_output",
+        "aggregation_and_deduplication_rules",
+        "downstream_filtering_lineage"
       ]
     }
   },
@@ -201,8 +485,23 @@
     "all_codes_must_have_disposition": true,
     "special_rules": {
       "MC-005": "目录命名未匹配仅作候选问题，必须经 AI 复核后才能认定模块缺失。",
-      "MC-011": "硬编码路径默认只作背景信息；只有暴露错误项目来源、错误模块来源或结果来源不明时才升级。"
+      "MC-011": "硬编码路径默认只作背景信息；只有暴露错误项目来源、错误模块来源或结果来源不明时才升级。",
+      "MC-016": "参考文献后的公司宣传页/服务领域页默认视为 boilerplate，不纳入高风险模块判定；只有这些内容出现在参考文献前的正式正文中，才升级为实质问题。"
     }
+  },
+  "report_appendix_policy": {
+    "ignore_company_promo_after_references": true,
+    "reference_markers": [
+      "参考文献",
+      "References"
+    ],
+    "boilerplate_markers": [
+      "公司介绍",
+      "服务领域",
+      "联系我们"
+    ],
+    "default_handling": "treat_as_out_of_scope_boilerplate",
+    "escalation_rule": "Only flag company promo content when it appears before the references section or contaminates numbered body sections."
   },
   "forbidden_shortcuts": [
     "整体基本一致",
@@ -228,6 +527,43 @@
       "XXX"
     ]
   },
+  "formal_delivery_policy": {
+    "enabled": true,
+    "manifest_filename": "formal_delivery_manifest.json",
+    "require_sealed_final_decision_binding": true,
+    "require_visual_audit_result_binding": true,
+    "revalidate_visual_audit_result_before_delivery": true,
+    "prohibited_report_state_phrases": [
+      "草案",
+      "复审草案",
+      "审核报告（草案）",
+      "待最终门禁",
+      "待正式发布",
+      "未发送通知",
+      "未发送",
+      "未归档",
+      "未声明审核已完成"
+    ]
+  },
+  "framework_binding_policy": {
+    "mode": "enforce",
+    "hash_algorithm": "sha256",
+    "case_manifest_fields": [
+      "framework_version",
+      "policy_sha256"
+    ],
+    "ai_execution_manifest_fields": [
+      "policy_version",
+      "policy_sha256"
+    ],
+    "required_before": [
+      "precheck_mutation",
+      "finalize",
+      "direct_archive"
+    ],
+    "legacy_rebuild_flag": "--rebuild-policy-binding",
+    "silent_rebinding_allowed": false
+  },
   "terminology_policy": {
     "forbidden_terms": [
       {
@@ -238,18 +574,57 @@
       {
         "term": "人工判断",
         "replacement": "AI判断",
-        "severity": "warning"
+        "severity": "error"
       },
       {
         "term": "人工确认",
         "replacement": "AI确认",
-        "severity": "warning"
+        "severity": "error"
+      },
+      {
+        "term": "人工裁定",
+        "replacement": "AI裁定",
+        "severity": "error"
+      },
+      {
+        "term": "人工核查",
+        "replacement": "AI核查",
+        "severity": "error"
+      },
+      {
+        "term": "人工抽查",
+        "replacement": "AI抽查",
+        "severity": "error"
+      },
+      {
+        "term": "人工审核",
+        "replacement": "AI审核",
+        "severity": "error"
+      },
+      {
+        "term": "人工审查",
+        "replacement": "AI审查",
+        "severity": "error"
+      },
+      {
+        "term": "人工判读",
+        "replacement": "AI判读",
+        "severity": "error"
+      },
+      {
+        "term": "人工干预",
+        "replacement": "AI处置",
+        "severity": "error"
       }
     ],
     "required_any_terms": [
       {
         "scope": "final_review_report.md",
-        "terms": ["AI复核", "AI处置", "AI裁定"],
+        "terms": [
+          "AI复核",
+          "AI处置",
+          "AI裁定"
+        ],
         "severity": "warning"
       }
     ]
@@ -264,5 +639,185 @@
     "mode": "targeted",
     "must_build_rereview_diff": true,
     "max_rounds_before_keep_blocking_verdict": 2
+  },
+  "subagent_compact_policy": {
+    "execution_model": "small_slice_subagents_then_three_route_merge",
+    "leader_role": "supervisor_and_integrator_only",
+    "max_parallel_slice_agents": 4,
+    "default_slice_result_dir": "agent_results/slices",
+    "default_slice_prompt_dir": "agent_prompts/slices",
+    "must_not_fork_full_context": true,
+    "must_persist_slice_results": true,
+    "must_checkpoint_between_batches": true,
+    "chat_output_contract": "max_5_lines_status_path_counts_blockers_only",
+    "leader_context_rule": "Lead 不直接展开长报告、长日志、完整清单、完整 JSON、完整通知元数据或大证据；正式审核证据由 subagent 落盘，Lead 只读取短状态、证据路径、计数和最终必要片段。",
+    "forbidden_patterns": [
+      "单个 Sub-Agent 完整审核整个项目",
+      "同时启动 3 个大而全 Sub-Agent 完整审核整个项目",
+      "每个 Sub-Agent 是全栈审核员",
+      "把完整 report_text.txt 粘贴进所有子代理 prompt",
+      "只在聊天记录中保留子代理发现",
+      "一个子代理同时承担图文、代码、统计、高风险模块全量审核",
+      "Sub-Agent 在聊天中回传完整 Markdown 报告、完整 JSON、长日志或大表",
+      "Lead 在最终回复中粘贴完整通知 metadata、归档路径、监督 JSON 路径或内部字段",
+      "为了说明完成状态而把所有产物路径和详细摘要塞进主线程"
+    ],
+    "merge_contract": "slice JSONs are merged into agent_a_result.json, agent_b_result.json, and agent_c_result.json before convergence_compare.py",
+    "model_quality_policy": {
+      "principle": "切小片只为控制上下文，不允许降低正式审核判断能力；正式审核子代理必须使用与主 agent 相同的模型",
+      "formal_judgement_slices_require": "same_model_as_lead_agent_required",
+      "current_frontier_example": "示例仅为运行环境主 agent 模型；正式审核以主 agent 当前模型为准，不写死降级模型",
+      "fast_model_allowed_only_for": [
+        "file_mapping",
+        "path_inventory",
+        "format_or_schema_check",
+        "grep_like_lookup"
+      ],
+      "must_not_downshift_for": [
+        "severity_judgement",
+        "cross_module_consistency",
+        "statistical_validity",
+        "high_risk_module_assessment",
+        "final_arbitration"
+      ],
+      "must_preserve_overlap_context": [
+        "report_summary",
+        "conclusion_sections",
+        "figure_table_index",
+        "mechanical_check_summary",
+        "case_manifest",
+        "slice_neighbor_dependencies"
+      ],
+      "high_risk_slice_rule": "高风险模块切片必须保留模块级完整上下文；不能按单文件过窄拆分",
+      "lead_global_review_required": true,
+      "must_inherit_lead_model": true,
+      "must_not_override_to_lower_model": true,
+      "same_reasoning_effort_rule": "reasoning effort must match Lead when known; if Lead is high, judgement subagents must be high"
+    },
+    "overlap_and_global_review": {
+      "minimum_overlap": "关键摘要/结论/图表索引/机械检查摘要至少进入所有判断型切片",
+      "cross_slice_checks": [
+        "coverage_gap",
+        "conflicting_findings",
+        "module_dependency_break",
+        "local_pass_global_fail",
+        "unassigned_high_risk_module"
+      ],
+      "route_merge_limit": "A/B/C 汇总器只能汇总 slice JSON；全局一致性与最终裁决由 Lead 执行"
+    },
+    "if_subagent_compact_or_context_loss": {
+      "required_action": "split_scope_again_before_retry",
+      "must_not_retry_same_scope": true,
+      "split_axes": [
+        "report_section",
+        "analysis_module",
+        "figure_range",
+        "file_group",
+        "evidence_type",
+        "issue_cluster"
+      ],
+      "maximum_retry_scope": "one narrow slice with one explicit output artifact",
+      "leader_contract": "Lead records failed slice path/blocker, creates smaller child slices, and retries only those slices; do not pull failed slice context into Lead chat."
+    },
+    "subagent_chat_return_budget": {
+      "max_lines": 5,
+      "allowed_fields": [
+        "status",
+        "output_path",
+        "finding_counts",
+        "highest_severity",
+        "blockers"
+      ],
+      "must_not_include": [
+        "full_markdown_report",
+        "full_json",
+        "long_logs",
+        "large_tables",
+        "full_notification_metadata",
+        "archived_internal_paths"
+      ],
+      "overflow_rule": "anything longer must be written to the declared artifact path and referenced by path only"
+    },
+    "leader_final_reply_budget": {
+      "max_lines": 8,
+      "formal_audit_notification_body": "compact_allowlist_only",
+      "allowed_fields": [
+        "status",
+        "time",
+        "project",
+        "report_file",
+        "audit_result",
+        "issue_stats"
+      ],
+      "must_not_include": [
+        "task_type",
+        "task_name",
+        "summary",
+        "workspace",
+        "review_dir",
+        "html_report",
+        "archived_to",
+        "subagent_supervision_summary",
+        "subagent_supervision_gate",
+        "full_metadata"
+      ],
+      "overflow_rule": "do not paste full metadata or artifact content into chat; cite paths only when user asks"
+    }
+  },
+  "subagent_supervision_policy": {
+    "enabled": true,
+    "required_for_finalize": true,
+    "summary_json": "subagent_supervision_summary.json",
+    "gate_json": "subagent_supervision_gate.json",
+    "minimum_completed_subagents": 3,
+    "default_initial_concurrency": "4-6",
+    "max_subagent_minutes": 30,
+    "max_subagent_seconds": 1800,
+    "allow_recursive_subagents": false,
+    "event_validation_mode": "shadow",
+    "event_log_jsonl": "review_event_log.jsonl",
+    "required_task_event_types": [
+      "subagent_dispatched",
+      "subagent_polled",
+      "subagent_completed",
+      "subagent_redispatched",
+      "subagent_failed"
+    ],
+    "required_task_event_fields": [
+      "task_id",
+      "phase",
+      "agent",
+      "attempt"
+    ],
+    "require_terminal_artifact_exists": true,
+    "required_timing_coverage": 1.0,
+    "leader_role_rule": "主 agent 只做监督、任务分派、轮询、整合和最终发送确认；正式审核内容必须由多个第一层 subagent 小切片完成。",
+    "timeout_rule": "单个 subagent 审核切片不得超过 30 分钟；超时、remote compact、无进展或卡住时必须拆小并重新分派，不得傻等。",
+    "required_fields": [
+      "schema_version",
+      "project_id",
+      "generated_at",
+      "status",
+      "passed",
+      "leader_role",
+      "subagent_strategy",
+      "max_subagent_minutes",
+      "recursive_subagents_allowed",
+      "completed_subagents",
+      "redispatched_subagents",
+      "failed_or_skipped_subagents",
+      "unresolved_items",
+      "notification_status"
+    ]
+  },
+  "code_delivery_policy": {
+    "standalone_no_code_severity": "WARNING",
+    "rule": "代码未交付、未发现代码文件、代码不可复现风险本身只按 WARNING 记录，不得单独升级为 CRITICAL、不得作为唯一不通过原因。",
+    "may_escalate_when": [
+      "代码或路径指向错误项目、错误模块、错误数据来源",
+      "报告方法、参数、阈值或包名与已交付代码/结果发生实质矛盾",
+      "缺失代码同时伴随核心统计错误、结论无证据、数据链断裂或无法追溯来源"
+    ],
+    "final_report_wording": "最终报告应单列代码不可复现风险，但需与真实统计/证据/数据链问题分开计级。"
   }
 }

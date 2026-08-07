@@ -1,6 +1,7 @@
 {
-  "_comment": "项目审核配置模板 - 复制此文件并重命名为 config.json",
-  "_usage": "审核新项目时，复制此文件到项目目录，填写项目信息，然后启动审核",
+  "_comment": "历史参考配置（legacy/reference-only），不属于 v7.0 正式审核入口",
+  "_framework_version": "legacy-v3.0",
+  "_usage": "禁止用于新项目；新项目统一运行 scripts/auto_audit_pipeline.py，并由 policy/audit_policy.json 生成当前框架清单",
 
   "project": {
     "id": "{{PROJECT_ID}}",

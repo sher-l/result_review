@@ -38,7 +38,17 @@ python result_review_framework/scripts/convergence_compare.py result_review_repo
 - 汇总高风险模块分层判断
 - 生成 `convergence_report.json` 和 `convergence_report.md`
 
-### 4. 最终报告门禁
+### 4. 最终收口（推荐主入口）
+```bash
+python result_review_framework/scripts/finalize_audit.py result_review_report/<项目编号>
+```
+
+作用：
+- 顺序执行 lint、autofix、required-section backfill、state sync、HTML 发布
+- 发布成功后按策略自动归档
+- 发送完成通知
+
+### 4.1 最终报告门禁（底层子步骤）
 ```bash
 python result_review_framework/scripts/final_report_linter.py result_review_report/<项目编号>
 python result_review_framework/scripts/generate_lint_autofix_plan.py result_review_report/<项目编号>
@@ -59,17 +69,18 @@ python result_review_framework/scripts/ensure_review_html.py result_review_repor
 - 从 Markdown 导出 HTML
 - 如果已配置 webhook，则在审核真正完成后自动发送通知
 
-## 现在最重要的 5 个脚本
+## 主线关键脚本
 - `auto_audit_pipeline.py`
 - `prepare_ai_audit_guardrails.py`
 - `convergence_compare.py`
+- `finalize_audit.py`
 - `final_report_linter.py`
 - `generate_lint_autofix_plan.py`
 - `apply_lint_autofix_plan.py`
 - `generate_required_section_backfill.py`
 - `apply_required_section_backfill.py`
 
-如果要改主线，优先改这 8 个。
+如果要改主线，优先改这些脚本。
 
 ## 策略来源
 
@@ -77,6 +88,10 @@ python result_review_framework/scripts/ensure_review_html.py result_review_repor
 - `../policy/audit_policy.json`
 
 以后新增规则，优先写进 policy，再让脚本读取。
+
+## 框架维护自检
+- `python result_review_framework/scripts/framework_health_check.py`
+- 用途：检查生成文档漂移、手写核心文档版本漂移、主线命令漂移
 
 ## 仍然可用但不是主入口的脚本
 - `render_final_review_html.py`
@@ -86,5 +101,6 @@ python result_review_framework/scripts/ensure_review_html.py result_review_repor
 - `terminology_audit.py`
 - `launch_convergence_audit.py`
 - `send_audit_notification.py`
+- `framework_health_check.py`
 
 这些脚本是主线上的配套件，不是新的入口。

@@ -8,6 +8,39 @@ from pathlib import Path
 from typing import Optional, List
 
 
+REPORT_REFERENCE_MARKERS = ('参考文献', 'References')
+REPORT_APPENDIX_STOP_MARKERS = ('公司介绍', '服务领域', '联系我们')
+
+
+def strip_non_audit_appendix(report_text: Optional[str]) -> Optional[str]:
+    """Strip default company promo pages that appear after references."""
+    if not report_text:
+        return report_text
+
+    reference_index = -1
+    reference_marker = ''
+    for marker in REPORT_REFERENCE_MARKERS:
+        idx = report_text.rfind(marker)
+        if idx > reference_index:
+            reference_index = idx
+            reference_marker = marker
+
+    if reference_index == -1:
+        return report_text
+
+    search_start = reference_index + len(reference_marker)
+    stop_positions = []
+    for marker in REPORT_APPENDIX_STOP_MARKERS:
+        idx = report_text.find(marker, search_start)
+        if idx != -1:
+            stop_positions.append(idx)
+
+    if not stop_positions:
+        return report_text
+
+    return report_text[:min(stop_positions)].rstrip()
+
+
 class BaseProjectChecker:
     """Provide shared project initialization and helper methods."""
 
@@ -69,9 +102,9 @@ class BaseProjectChecker:
     def load_report_text(self) -> Optional[str]:
         """加载报告文本（优先使用缓存，否则调用 utils.find_report_text）"""
         if self._cached_report_text is not None:
-            return self._cached_report_text
+            return strip_non_audit_appendix(self._cached_report_text)
         from utils import find_report_text
-        return find_report_text(self.project_path)
+        return strip_non_audit_appendix(find_report_text(self.project_path))
 
     def find_modules(self, pattern: str = r'^\d{2}[_\-]') -> List[Path]:
         """查找编号模块目录。

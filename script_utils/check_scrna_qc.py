@@ -48,7 +48,7 @@ class ScRNAQCChecker(BaseProjectChecker):
                 self.warnings.append({
                     'severity': 'INFO',
                     'category': 'scRNA QC参数摘要（无报告降级模式）',
-                    'message': '未找到报告文本，仅列出代码中的 QC 过滤参数供人工核对',
+                    'message': '未找到报告文本，仅列出代码中的 QC 过滤参数供 AI核对',
                     'evidence': code_qc,
                 })
             return {

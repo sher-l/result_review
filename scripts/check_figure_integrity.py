@@ -7,7 +7,8 @@
 3. 图片分辨率（PNG/JPG/TIFF）
 4. 文件名拼写异常（常见typo检测）
 5. Figure编号连续性
-6. 汇总报告输出
+6. 图件交付格式（PDF-only 可接受；PNG-only 提示补 PDF）
+7. 汇总报告输出
 
 用法：
     python check_figure_integrity.py <项目结果文件夹路径>
@@ -224,6 +225,22 @@ def scan_figures(project_path: Path) -> Dict:
     numbering_issues = check_figure_numbering(fig_numbers)
     for issue in numbering_issues:
         results["warnings"].append(f"🟡 {issue}")
+
+    pdf_png_pairs: dict[str, set[str]] = {}
+    display_paths: dict[str, str] = {}
+    for fpath in all_figure_files:
+        ext = fpath.suffix.lower()
+        if ext not in {".pdf", ".png"}:
+            continue
+        key = str(fpath.relative_to(project_path).with_suffix(""))
+        pdf_png_pairs.setdefault(key, set()).add(ext)
+        display_paths.setdefault(key, str(fpath.relative_to(project_path)))
+
+    for key, exts in sorted(pdf_png_pairs.items()):
+        if ".png" in exts and ".pdf" not in exts:
+            results["warnings"].append(
+                f"🟡 缺少PDF图件: {display_paths.get(key, key + '.png')}（PDF-only 可接受；PNG-only 需说明或补充PDF）"
+            )
 
     return results
 

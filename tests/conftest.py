@@ -6,6 +6,7 @@ cd result_review_framework
 python -m pytest tests/ -v
 """
 
+import socket
 import sys
 from pathlib import Path
 
@@ -14,6 +15,18 @@ import pytest
 # 统一 sys.path 设置
 sys.path.insert(0, str(Path(__file__).parent.parent / 'script_utils'))
 sys.path.insert(0, str(Path(__file__).parent.parent / 'scripts'))
+
+
+@pytest.fixture(autouse=True)
+def deny_all_outbound_network(monkeypatch):
+    """Regression tests are local-only; any socket or notification egress fails."""
+    monkeypatch.setenv("AUDIT_FRAMEWORK_DENY_NETWORK", "1")
+
+    def blocked(*_args, **_kwargs):
+        raise AssertionError("outbound network is forbidden during audit framework tests")
+
+    monkeypatch.setattr(socket, "create_connection", blocked)
+    monkeypatch.setattr(socket.socket, "connect", blocked)
 
 
 @pytest.fixture

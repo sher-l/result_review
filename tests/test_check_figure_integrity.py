@@ -133,6 +133,41 @@ class TestExtractFigureNumbers:
         assert sorted(nums) == [1, 2]
 
 
+class TestPreferredPdfDeliveryPolicy:
+    """PDF delivery policy."""
+
+    def test_no_warning_when_pdf_lacks_png_pair(self, tmp_path):
+        pdf = tmp_path / "Figure1.pdf"
+        pdf.write_bytes(b"%PDF-1.4\n")
+        c = make_checker(tmp_path)
+
+        warnings = c._check_pdf_png_dual_format([pdf], tmp_path)
+
+        assert warnings == []
+
+    def test_warns_when_png_lacks_pdf_pair(self, tmp_path):
+        png = tmp_path / "Figure1.png"
+        png.write_bytes(b"\x89PNG\r\n\x1a\n")
+        c = make_checker(tmp_path)
+
+        warnings = c._check_pdf_png_dual_format([png], tmp_path)
+
+        assert len(warnings) == 1
+        assert warnings[0]["severity"] == "WARNING"
+        assert "缺少PDF" in warnings[0]["message"]
+
+    def test_no_warning_when_pdf_and_png_pair_exist(self, tmp_path):
+        pdf = tmp_path / "Figure1.pdf"
+        png = tmp_path / "Figure1.png"
+        pdf.write_bytes(b"%PDF-1.4\n")
+        png.write_bytes(b"\x89PNG\r\n\x1a\n")
+        c = make_checker(tmp_path)
+
+        warnings = c._check_pdf_png_dual_format([pdf, png], tmp_path)
+
+        assert warnings == []
+
+
 # ===== 常量验证 =====
 
 class TestConstants:

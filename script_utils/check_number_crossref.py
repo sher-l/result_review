@@ -144,12 +144,12 @@ class NumberCrossrefChecker(BaseProjectChecker):
         file_counts = self._scan_csv_counts(result_root)
 
         if not report_text:
-            # 降级模式：无报告时列出 CSV 行数摘要供人工核对
+            # 降级模式：无报告时列出 CSV 行数摘要供 AI核对
             if file_counts:
                 self.warnings.append({
                     'severity': 'INFO',
                     'category': 'CSV行数摘要（无报告降级模式）',
-                    'message': '未找到报告文本，仅列出文件行数供人工核对',
+                    'message': '未找到报告文本，仅列出文件行数供 AI核对',
                     'evidence': {label: {'rows': count, 'file': fpath}
                                  for label, (count, fpath) in file_counts.items()},
                 })

@@ -120,6 +120,9 @@ class FigureIntegrityChecker(BaseProjectChecker):
                     "message": f"Figure 编号不连续: {fig_nums[i]}→{fig_nums[i+1]}，缺 {missing}"
                 })
 
+        for warning in self._check_preferred_pdf_delivery(figure_files, result_dir):
+            warnings.append(warning)
+
         return {"issues": issues, "warnings": warnings, "stats": stats}
 
     # ── 内部方法 ──
@@ -147,6 +150,40 @@ class FigureIntegrityChecker(BaseProjectChecker):
                 if Path(fn).suffix.lower() in FIGURE_EXTENSIONS:
                     files.append(Path(dirpath) / fn)
         return files
+
+    def _check_preferred_pdf_delivery(self, figure_files: List[Path], root: Path) -> List[Dict]:
+        """Check figure delivery format.
+
+        PDF-only delivery is acceptable.  PNG-only delivery is still flagged
+        because PDF is the preferred review/publication artifact and is usually
+        easier to render consistently across platforms.
+        """
+        by_stem: Dict[str, set[str]] = {}
+        display_path: Dict[str, str] = {}
+        for fpath in figure_files:
+            ext = fpath.suffix.lower()
+            if ext not in {".pdf", ".png"}:
+                continue
+            try:
+                key = str(fpath.relative_to(root).with_suffix(""))
+            except ValueError:
+                key = str(fpath.with_suffix(""))
+            by_stem.setdefault(key, set()).add(ext)
+            display_path.setdefault(key, self._relative_path(fpath))
+
+        warnings: List[Dict] = []
+        for key, exts in sorted(by_stem.items()):
+            if ".png" in exts and ".pdf" not in exts:
+                warnings.append({
+                    "file": display_path.get(key, f"{key}.png"),
+                    "severity": "WARNING",
+                    "message": "图件仅有PNG，缺少PDF交付；PDF-only 可接受，但 PNG-only 需说明或补充PDF",
+                })
+        return warnings
+
+    # Backward-compatible alias for older tests/importers.
+    def _check_pdf_png_dual_format(self, figure_files: List[Path], root: Path) -> List[Dict]:
+        return self._check_preferred_pdf_delivery(figure_files, root)
 
     def _pdf_page_count(self, fp: Path) -> int | None:
         try:

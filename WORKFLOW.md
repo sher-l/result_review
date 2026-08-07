@@ -3,8 +3,8 @@
 > 说明：本文件是展开版流程参考，不再是第一入口。  
 > 当前正式审核先以 `policy/audit_policy.json`、`README.md`、`MASTER_PROMPT.md` 为准；本文件用于补充细节，不用于覆盖主线口径。
 
-> **版本**: v6.5
-> **更新日期**: 2026-04-17
+> **版本**: v7.1
+> **更新日期**: 2026-07-30
 > **状态**: ✅ 已升级（五层执行引擎：Layer 0 预解析 + Layer 1 检查器 + Layer 2 全量视觉审核 + Layer 3 Sub-Agent + Layer 4 最终复核）
 > **收敛协议**: [CONVERGENCE_REVIEW_PROTOCOL.md](CONVERGENCE_REVIEW_PROTOCOL.md)
 
@@ -176,7 +176,7 @@ python script_utils/check_data_flow.py <项目路径>
 - [ ] 关键结论是否有结构化结果文件支持，而不是只有图片或 PDF
 - [ ] 只交付筛选后结果的模块，是否缺少原始总表或中间总表
 - [ ] 图件是否存在明显导出异常、错图、损坏或可视化异常
-- [ ] 若项目未交付代码，是否已提前标记“代码不可复现风险”
+- [ ] 若项目未交付代码，是否已提前标记 WARNING 级“代码不可复现风险”，且未单独升级为 CRITICAL
 
 **严重性标准**：
 - 漏报核心模块、暴露、数据集，或选择性隐藏阴性结果 → 🔴 **CRITICAL**
@@ -188,6 +188,7 @@ python script_utils/check_data_flow.py <项目路径>
 - 细胞类型中文翻译事实性错误 → 🔴 **CRITICAL**
 - 临床统计项目把“差异显著”误写成错误方向（如把双胎率更低写成胎数更高） → 🔴 **CRITICAL**
 - 临床统计项目声称使用逐步回归/LASSO/Bootstrap，但代码无对应函数调用 → 🔴 **CRITICAL**
+- 单纯未交付代码 / 未发现代码文件 / 代码不可复现风险 → 🟡 **WARNING**；不得仅因无代码升级为 CRITICAL，也不得作为唯一不通过原因
 - TopN 数量与实际不符 → 🟠 **MAJOR**
 - R 包名称拼写错误 → 🟠 **MAJOR**
 - 图注标注字母重复或跳号 → 🟠 **MAJOR**
@@ -235,27 +236,57 @@ python script_utils/check_data_flow.py <项目路径>
 - 风险分层状态
 - 逐项证据复核优先级建议
 
-### 最终 HTML 导出（⚠️ 必做，不可跳过）
+### 错题集闭环（⚠️ 必做）
 
-当 `final_review_report.md` 完成后，**必须立即**运行以下命令生成 HTML 交付件：
+审核启动前，Lead Auditor 必须读取 `lessons/LESSONS_LEARNED.md` 和 `lessons/patterns/`，把与当前项目相同或相近的历史错误模式列入重点复核项。
+
+要求：
+- 命中错题集的内容必须在当前项目中加严核验，必要时写入 `fact_check_list.md` 或高风险模块核对项。
+- 错题集只提供风险提示，不能直接套用历史项目结论；必须回到当前报告、代码、结果文件和图表证据独立判断。
+- Round 4 最终报告完成后、运行 `finalize_audit.py` 前，必须把本次典型错误点沉淀到 `lessons/`。
+- 单条错题至少记录：错误类型、具体表现、触发场景、证据依据、正确标准、下次审核提醒、严重程度。
+- 若本次无新增可复用错误模式，应在 `final_review_report.md` 的经验总结/复盘处明确写明“无新增错题集沉淀项”。
+
+### 最终收口（⚠️ 必做，优先走 `finalize_audit.py`）
+
+当 `final_review_report.md` 和错题集复盘完成后，**必须立即**运行以下命令完成最终收口与交付：
 
 ```bash
-python result_review_framework/scripts/ensure_review_html.py result_review_report/<项目编号>
+python result_review_framework/scripts/finalize_audit.py result_review_report/<项目编号>
 ```
 
 要求：
 - `final_review_report.md` 为唯一真源
 - `audit_report.html` 必须由脚本派生生成
-- Markdown 更新后必须重新导出 HTML
-- **此步骤为必做步骤，不生成 HTML 不算完成审核交付**
+- 默认通过 `finalize_audit.py` 统一触发 lint / autofix / backfill / state sync / HTML 发布 / 自动归档
+- 不允许只发布不移动；HTML 发布成功后必须移动到 `raw/已AI审核一次`，归档失败则本次收口失败
+- 若只是单独调试 HTML 派生步骤，才直接运行 `ensure_review_html.py`
+- **此步骤为必做步骤，不完成最终收口不算审核交付完成**
+- **持续恢复规则**：`finalize_audit.py` 的本地可恢复失败（缺交付物、schema/contract/lint 不一致、清单映射错误、HTML 发布或归档预检失败）不得作为审核结束点。Lead 必须记录失败阶段，按最小范围修复或重新分派，复跑对应本地门与同一官方 finalize 路径；只有取得正式通知 `sent` 回执并验证归档，或遇到需要新增用户授权/外部状态变化的不可恢复失败，才能结束或向用户请求处理。
 
-> **教训**: 25YHB656F 审核中遗漏了此步骤，导致交付不完整。
+> **教训**: 25YHB656F 审核中遗漏了最终 HTML 交付步骤，现统一纳入 `finalize_audit.py` 收口。
 
-### 三路审核触发规则（新增，强制）
+### 三路审核触发规则（强制，小切片执行）
 
-- 只要进入“正式审核”而不是“咨询/框架讨论”状态，Lead Auditor 就必须在 Layer 2 之后立即启动 3 个独立 Sub-Agent。
+- 只要进入“正式审核”而不是“咨询/框架讨论”状态，Lead Auditor 就必须在 Layer 2 之后启动小切片 Sub-Agent，并最终汇总为三路结果。
+- Lead Auditor 的默认职责是监工、分工、整合、仲裁和最终门禁；不得把主线程当作全文审核执行者。
+- Lead 不应在主线程直接展开长报告、长日志、完整清单、完整 JSON、完整通知 metadata 或大证据；正式审核证据必须由 Sub-Agent 落盘，Lead 只读取短状态、证据路径、计数和最终必要片段，避免 leader 触发 remote compact。
+- 禁止把完整项目一次性交给 1 个 Sub-Agent 或 3 个“大而全” Sub-Agent 审核；三路是收敛口径，不是大任务分发口径。
+- 必须先读取 `agent_prompts/agent_slice_manifest.json`，再按 `agent_prompts/slices/*.md` 分批执行；每批最多 4 个切片。
+- 每个切片必须写入 `agent_results/slices/*.json`；聊天最多返回 5 行，只返回状态、输出路径、发现数量、最高严重度和阻断项。
+- 正式判断型 Sub-Agent 必须使用与主 agent 相同的模型；如主 agent 为 high reasoning，判断型子代理也必须 high。`fast/mini/explore` 只能用于定位、清单、schema、grep，不能裁定严重度、统计适用性、高风险模块或最终仲裁。若子代理触发 remote compact/context loss，必须先继续拆分切片再重试，禁止原范围重跑。
+- 每批切片完成后必须把进度写入 `review_event_log.jsonl`，并更新项目内 `subagent_supervision_summary.json`；不得依赖外部运行时目录保存唯一 checkpoint。
 - 用户说“开始审核某项目 / 审核下一个 / 现在重审某项目”时，默认视为已经授权完整执行主线，不再额外追问是否启用三路。
 - 只有当用户明确要求“单人初筛”“暂不走三路”“只看某一块”时，才允许降级。
+
+### 最终报告：错误机制优先，而非问题堆叠
+
+- 正文开头必须是“提交阻断问题”，最多 5 项；它们只包括会改变提交结论、关键主张可信度或独立复现能力的问题。
+- 每项按**错误点 → 证据 → 修订要求**写。错误点必须说出“当前材料实际写/做了什么”和“具体错在哪里”；修订要求必须说明应如何计算、表述或补交。证据必须给出报告行号、结果/代码/图表的精确路径或可核验数值；没有具体证据的怀疑不能进入核心正文。
+- 不把“影响”设为固定字段。只有在不说明就无法理解提交结论时，才用一句说明结论边界；不得用“可能影响可信度”等泛泛表述掩盖错误机制。
+- 其余已裁定问题在“其他已裁定问题”中以 `S-` 编号简明呈现；每项同样保留**错误点、证据、修订要求**，不写成只含 finding 编号的概览表。
+- 逐分析点表只保留已裁定问题，作为问题编号的索引，不得替代对错误机制和修订要求的直接说明；不得默认再写“问题证据展开”。
+- 收敛记录、机械检查、完整仲裁、文件盘点、监督记录以及未成立候选项的排除理由属于审核底稿，不写入正式报告正文或 HTML 卡片；只有用户明确要求争议复核时，才另附对应摘录。
 
 ### 系统性文本搜索（⚠️ 必做，不可跳过）
 
@@ -307,27 +338,32 @@ python result_review_framework/scripts/terminology_audit.py --project-dir <项�
 > **完整协议**: [CONVERGENCE_REVIEW_PROTOCOL.md](CONVERGENCE_REVIEW_PROTOCOL.md)
 > **Agent 执行方案**: [agent_plans/AGENT_TEAM_PLAN.md](agent_plans/AGENT_TEAM_PLAN.md)
 
-Round 1（专业组检查）和 Round 2（交叉验证）已升级为**三路独立审核 + 迭代收敛**模式：
+Round 1（专业组检查）和 Round 2（交叉验证）已升级为**小切片 Sub-Agent + 三路汇总 + 迭代收敛**模式：
 
 ### 执行摘要
 
 1. **Round 0**: Auto-Precheck → Layer 0 (预解析) + Layer 1 (21 检查器)
 2. **Round 1**: Layer 2 全量视觉审核 — Lead Auditor 逐图查看全部 Figure，产出 `figure_audit.md`
-3. **Round 2**: 同时启动 3 个独立 Sub-Agent (Layer 3)，输入增加 `figure_audit.md`，每个独立完成双轮审核
-4. **Round 3**: Lead Auditor 收集 3 方结果进行交叉比对 → 迭代收敛（最多 3 轮）
+3. **Round 2**: 分批启动小切片 Sub-Agent (Layer 3)，每个切片只处理一个窄范围并落盘到 `agent_results/slices/`
+4. **Round 3**: Lead Auditor 将切片汇总成 3 方结果并进行交叉比对 → 迭代收敛（最多 3 轮）
 5. **Round 4**: Lead Auditor 汇总一致结论 → 生成最终报告初稿
 6. **Round 5**: Layer 4 源文本+视觉 最终复核 → 排除假阳性 → 生成最终 HTML
 
 ### 关键规则
 
-- 每个 Sub-Agent 是全栈审核员，同时承担代码审查和内容审查
-- Sub-Agent 之间**不得共享**审核中间结果（独立性原则）
+- 每个小切片 Sub-Agent 只承担明确窄范围，不是全栈完整审核员
+- 如果任一 Sub-Agent 触发 remote compact/context loss，Lead 必须把该切片按章节、模块、图号范围、文件组或问题簇继续拆小后重试，禁止按原范围重复启动。
+- 小切片 Sub-Agent 之间**不得共享**审核中间结果（独立性原则）；同一路汇总器只读取本路 slice JSON
+- 不得复制 Lead 全量上下文给子代理；不得在聊天中粘贴长日志、完整 JSON、完整 Markdown 报告、大表、完整通知 metadata 或内部归档路径
+- Lead 只做监工/整合/仲裁，不直接吞入长报告、长日志、完整文件清单或大证据；完整证据必须写入文件，聊天只回短状态、路径、计数和 blocker
+- Lead 最终回复最多 8 行；正式审核完成通知只保留状态、时间、项目、报告文件、审核结果和问题统计，不贴摘要、workspace、内部路径或监督 JSON 元数据
+- 正式判断型 Sub-Agent 必须使用与主 agent 相同的模型；如主 agent 为 high reasoning，判断型子代理也必须 high。`fast/mini/explore` 仅可作为检索/定位辅助。若子代理触发 remote compact/context loss，必须先继续拆分切片再重试，禁止原范围重跑
 - 交叉比对分四级：共识(3/3) / 多数(2/3) / 单方(1/3) / 分歧(冲突)
-- 迭代收敛时构建**问题并集**，每个 Agent 针对性验证他人发现和分歧项
+- 迭代收敛时构建**问题并集**，只针对分歧点启动小切片复核，不重新启动大范围审核
 - 终止条件：3 方结论完全一致 + 无新增 + 无分歧，或达到 3 轮硬限制
 - 不允许用"投票多数"替代证据验证
-- 最终报告中必须单列“自动机械检查处置表”，逐条写明保留/撤销/降级/升级
-- 对分子对接、MD、虚拟敲除等高风险模块，必须分别给出：模块是否真实存在、证据是否充分、是否可复现、结论强度是否被过度外推
+- 审核底稿必须保留“自动机械检查处置表”，逐条写明保留/撤销/降级/升级；正式报告只写经裁定且需要读者处理的问题
+- 对分子对接、MD、虚拟敲除等高风险模块，底稿必须分别记录：模块是否真实存在、证据是否充分、是否可复现、结论强度是否被过度外推；正式报告仅在存在已裁定问题时写入对应条目
 
 ### Sub-Agent 报告保存规则（强制）
 
@@ -473,11 +509,12 @@ Round 1（专业组检查）和 Round 2（交叉验证）已升级为**三路独
    - 不得依赖 Sub-Agent 的摘要或引述
    - 必须定位到具体行号，读取完整句子
    - 与代码/结果文件直接对比，形成独立判断
+   - 行号仅用于审核底稿；写入正式报告时必须转换为“原 DOCX 文件名 + 章节/图表标题 + 原文短句”，页码仅在固定渲染版本已核验时辅助使用
 3. **假阳性标记**：如果原文与 Sub-Agent 描述不符，标记为假阳性(FP)，记录：
    - Sub-Agent 原始报告内容
    - 原文实际内容（含行号）
    - 判定：✅ 一致/假阳性
-4. **更新审核产物**：修正四份审核文件（coverage_matrix / fact_check_list / unresolved_items / final_review_report）
+4. **更新审核产物**：修正四份审核文件（coverage_matrix / fact_check_list / unresolved_items / final_review_report）；最终报告按顶层问题主题组织，但每个独立修订动作必须成为一个“具体错误”，不得合并压缩
 5. **记录自纠正**：在 `final_review_report.md` 和 `audit_report.html` 中设立"复核阶段自纠正"专区
 
 ### Layer 4 必须回溯的高风险项（⚠️ 强制）
@@ -1164,7 +1201,7 @@ python init_check.py "项目路径"
 ```python
 # Step 1: 从报告中提取数字
 # Step 2: 定位对应文件
-# Step 3: 用代码统计（不要人工数！）
+# Step 3: 用代码统计（不要手数！）
 # Step 4: 对比差异
 # Step 5: 差异>5%记录，>20%标记严重问题
 ```
@@ -1792,7 +1829,7 @@ source('E:/yiqishiyanwan/wangbo/R_code/msvmRFE.R')   # ❌ 外部绝对路径
 | 数据读取路径 | read.csv等的路径参数 | 视是否影响结果来源判断而定 |
 
 **严重性分级**:
-- 🟢 **默认不判问题**: 仅出现 `setwd()`、盘符路径、相对路径（如 `../04-功能富集分析`），但未显示跨项目取错数据，且不影响本次审核对结果文件的人工核对
+- 🟢 **默认不判问题**: 仅出现 `setwd()`、盘符路径、相对路径（如 `../04-功能富集分析`），但未显示跨项目取错数据，且不影响本次审核对结果文件的 AI核对
 - 🟠 **MAJOR/CRITICAL**: 路径暴露错误项目编号、错误数据来源、错误模块来源，或导致“方法-结果文件”对应关系无法判断
 - 🔴 **FATAL**: 明确证实代码读取/输出的是其他项目材料，并已动摇当前项目核心结论可信度
 
@@ -1820,6 +1857,6 @@ save.path <- "results/00_rawdata/"  # ✅ 小写r
 
 ---
 
-**最后更新**: 2026-04-17
-**版本**: v6.5
+**最后更新**: 2026-07-30
+**版本**: v7.1
 **维护者**: GitHub Copilot

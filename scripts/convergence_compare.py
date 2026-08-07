@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 import sys
 from collections import defaultdict
@@ -23,6 +24,15 @@ REQUIRED_FINDING_FIELDS = tuple(POLICY["finding_evidence_policy"]["required_fiel
 DIMENSION_KEYS = tuple(POLICY["high_risk_module_policy"]["required_dimensions"])
 SEVERITY_ORDER = {"FATAL": 5, "CRITICAL": 4, "MAJOR": 3, "WARNING": 2, "INFO": 1}
 EVIDENCE_CRITICAL_FIELDS = ("source_path", "locator", "quote_or_value", "evidence")
+REQUIRED_SLICE_KEYS = ("slice_id", "agent", "status", "findings", "summary")
+PROFESSIONAL_POLICY = POLICY.get("professional_contract_policy", {})
+SEMANTIC_MERGE_FIELDS = tuple(
+    PROFESSIONAL_POLICY.get(
+        "semantic_merge_tuple",
+        ("module", "claim", "error_mechanism", "evidence_object", "repair_path"),
+    )
+)
+PROTECTED_MERGE_VETOES = frozenset(PROFESSIONAL_POLICY.get("protected_merge_vetoes", ()))
 
 
 def normalize_text(value: object) -> str:
@@ -33,6 +43,99 @@ def normalize_text(value: object) -> str:
 
 def normalize_location(value: object) -> str:
     return normalize_text(value).lower()
+
+
+def _stable_digest(parts: list[str]) -> str:
+    payload = "\x1f".join(parts).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()[:20]
+
+
+def ensure_raw_finding_id(finding: dict, agent_id: str = "") -> str:
+    """Attach an immutable identity for one raw route finding.
+
+    ``finding_key`` remains a legacy content key.  It must not be used as the
+    identity of a route observation because different agents may deliberately
+    report the same issue.
+    """
+    existing = normalize_text(finding.get("raw_finding_id"))
+    if existing:
+        return existing
+    raw_id = "rf:" + _stable_digest(
+        [
+            normalize_text(agent_id),
+            normalize_text(finding.get("id")),
+            normalize_text(finding.get("source_type")),
+            normalize_text(finding.get("source_path")),
+            normalize_text(finding.get("locator")),
+            normalize_text(finding.get("quote_or_value")),
+        ]
+    )
+    finding["raw_finding_id"] = raw_id
+    return raw_id
+
+
+def semantic_merge_tuple(finding: dict) -> dict[str, str]:
+    return {field: normalize_text(finding.get(field)).lower() for field in SEMANTIC_MERGE_FIELDS}
+
+
+def build_cluster_key(finding: dict) -> str:
+    """Build a semantic cluster key separate from raw identity/finding key."""
+    semantic = semantic_merge_tuple(finding)
+    if all(semantic.values()):
+        parts = [semantic[field] for field in SEMANTIC_MERGE_FIELDS]
+    else:
+        parts = ["legacy", ensure_finding_key(finding)]
+    cluster_key = "ck:" + _stable_digest(parts)
+    finding["cluster_key"] = cluster_key
+    return cluster_key
+
+
+def _protected_categories(finding: dict) -> set[str]:
+    values: list[object] = []
+    for key in ("protected_category", "protected_categories", "merge_veto_category"):
+        value = finding.get(key)
+        if isinstance(value, (list, tuple, set)):
+            values.extend(value)
+        elif value:
+            values.append(value)
+    return {
+        normalize_text(value).lower()
+        for value in values
+        if normalize_text(value).lower() in PROTECTED_MERGE_VETOES
+    }
+
+
+def assess_semantic_link(left: dict, right: dict, threshold: float = 0.4) -> dict:
+    """Return an auditable, candidate-only linkage assessment for two findings."""
+    left_tuple = semantic_merge_tuple(left)
+    right_tuple = semantic_merge_tuple(right)
+    veto_codes: list[str] = []
+
+    left_categories = _protected_categories(left)
+    right_categories = _protected_categories(right)
+    if (left_categories or right_categories) and left_categories != right_categories:
+        veto_codes.append("protected_category_mismatch")
+
+    for field in SEMANTIC_MERGE_FIELDS:
+        if left_tuple[field] and right_tuple[field] and left_tuple[field] != right_tuple[field]:
+            veto_codes.append(f"semantic_{field}_mismatch")
+
+    similarity = compute_similarity(left, right)
+    exact_finding_key = ensure_finding_key(left) == ensure_finding_key(right)
+    complete_tuple = all(left_tuple.values()) and all(right_tuple.values())
+    exact_semantic_tuple = complete_tuple and left_tuple == right_tuple
+    linked = not veto_codes and (exact_semantic_tuple or exact_finding_key or similarity >= threshold)
+
+    return {
+        "left_raw_finding_id": normalize_text(left.get("raw_finding_id")),
+        "right_raw_finding_id": normalize_text(right.get("raw_finding_id")),
+        "linked": linked,
+        "similarity": round(similarity, 4),
+        "exact_finding_key": exact_finding_key,
+        "complete_semantic_tuple": complete_tuple,
+        "exact_semantic_tuple": exact_semantic_tuple,
+        "veto_codes": veto_codes,
+    }
 
 
 def compute_similarity(left: dict, right: dict) -> float:
@@ -96,58 +199,91 @@ def pick_majority(values: list[str], default: str = "") -> str:
 
 
 def match_findings(results: dict[str, list[dict]], threshold: float = 0.4) -> list[dict]:
-    flattened = []
+    flattened: list[dict] = []
     for agent_id, findings in results.items():
         for finding in findings:
+            raw_finding_id = ensure_raw_finding_id(finding, agent_id)
             flattened.append(
                 {
                     "agent": agent_id,
                     "finding": finding,
                     "finding_key": ensure_finding_key(finding),
+                    "raw_finding_id": raw_finding_id,
+                    "cluster_key": build_cluster_key(finding),
                     "matched": False,
                 }
             )
 
-    groups = []
-    exact_groups: dict[str, dict] = {}
-    for item in flattened:
-        bucket = exact_groups.setdefault(
-            item["finding_key"],
-            {"finding_key": item["finding_key"], "findings": {}, "agents": set(), "match_mode": "exact"},
-        )
-        if item["agent"] in bucket["agents"]:
-            continue
-        bucket["findings"][item["agent"]] = item["finding"]
-        bucket["agents"].add(item["agent"])
-
-    for item in flattened:
-        bucket = exact_groups[item["finding_key"]]
-        if len(bucket["agents"]) > 1:
-            item["matched"] = True
-    groups.extend(bucket for bucket in exact_groups.values() if len(bucket["agents"]) > 1)
-
-    for index, item in enumerate(flattened):
-        if item["matched"]:
-            continue
-
-        group = {
+    def new_group(item: dict, mode: str) -> dict:
+        return {
             "finding_key": item["finding_key"],
+            "cluster_key": item["cluster_key"],
             "findings": {item["agent"]: item["finding"]},
             "agents": {item["agent"]},
-            "match_mode": "similarity",
+            "items": [item],
+            "match_mode": mode,
+            "pairwise_checks": [],
+            "rejected_candidates": [],
         }
+
+    def try_add(group: dict, item: dict, require_exact_key: bool = False) -> bool:
+        if item["agent"] in group["agents"]:
+            return False
+        checks = [assess_semantic_link(member["finding"], item["finding"], threshold) for member in group["items"]]
+        if require_exact_key:
+            compatible = all(check["linked"] and check["exact_finding_key"] for check in checks)
+        else:
+            compatible = all(check["linked"] for check in checks)
+        if not compatible:
+            group["rejected_candidates"].append(
+                {
+                    "raw_finding_id": item["raw_finding_id"],
+                    "checks": checks,
+                }
+            )
+            return False
+        group["findings"][item["agent"]] = item["finding"]
+        group["agents"].add(item["agent"])
+        group["items"].append(item)
+        group["pairwise_checks"].extend(checks)
+        if all(check["exact_semantic_tuple"] for check in checks):
+            group["match_mode"] = "semantic_tuple"
+        return True
+
+    # Preserve the established preference for exact finding keys, but apply
+    # complete-link and semantic vetoes inside each exact-key bucket.
+    groups: list[dict] = []
+    exact_buckets: dict[str, list[dict]] = defaultdict(list)
+    for item in flattened:
+        exact_buckets[item["finding_key"]].append(item)
+    for bucket_items in exact_buckets.values():
+        exact_groups: list[dict] = []
+        for item in bucket_items:
+            target = next((group for group in exact_groups if try_add(group, item, require_exact_key=True)), None)
+            if target is None:
+                exact_groups.append(new_group(item, "exact"))
+        for group in exact_groups:
+            if len(group["agents"]) > 1:
+                for item in group["items"]:
+                    item["matched"] = True
+                groups.append(group)
+
+    # Similarity fallback is a proposal only.  A candidate joins a cluster
+    # only when it is compatible with every existing member (complete-link).
+    for item in flattened:
+        if item["matched"]:
+            continue
+        group = new_group(item, "similarity_candidate")
         item["matched"] = True
-
-        for other_index in range(index + 1, len(flattened)):
-            other = flattened[other_index]
-            if other["matched"] or other["agent"] in group["agents"]:
+        for other in flattened:
+            if other["matched"] or other is item:
                 continue
-            if compute_similarity(item["finding"], other["finding"]) >= threshold:
-                group["findings"][other["agent"]] = other["finding"]
-                group["agents"].add(other["agent"])
+            if try_add(group, other):
                 other["matched"] = True
-
         groups.append(group)
+
+    for group in groups:
+        group.pop("items", None)
 
     return groups
 
@@ -171,13 +307,26 @@ def classify_groups(groups: list[dict], total_agents: int) -> dict[str, list[dic
 
 
 def build_arbitration_queue(classified: dict[str, list[dict]]) -> list[dict]:
+    """Return every finding group that needs a recorded final disposition.
+
+    Severity controls prioritization, not whether a finding is silently removed
+    from the audit trail.  A leader may reject, merge, or retain an item, but
+    each raw finding must reach arbitration so that the final contract can
+    account for it.
+    """
     queue = []
-    for route_name, route_value in (("high_risk_divergence", classified["divergent"]), ("single_high_risk", classified["single"])):
+    for route_name, route_value in (
+        ("divergent", classified["divergent"]),
+        ("single", classified["single"]),
+        ("consensus", classified["consensus"]),
+        ("majority", classified["majority"]),
+    ):
         for group in route_value:
             max_severity = get_max_severity(group["findings"])
-            evidence_complete = all(has_complete_high_risk_evidence(finding) for finding in group["findings"].values())
-            if max_severity not in {"FATAL", "CRITICAL"} and evidence_complete:
-                continue
+            evidence_complete = all(
+                has_complete_high_risk_evidence(finding)
+                for finding in group["findings"].values()
+            )
             queue.append(
                 {
                     "finding_key": group.get("finding_key", ""),
@@ -192,27 +341,6 @@ def build_arbitration_queue(classified: dict[str, list[dict]]) -> list[dict]:
                     },
                 }
             )
-
-    for group in classified["consensus"] + classified["majority"]:
-        max_severity = get_max_severity(group["findings"])
-        if max_severity not in {"FATAL", "CRITICAL"}:
-            continue
-        if all(has_complete_high_risk_evidence(finding) for finding in group["findings"].values()):
-            continue
-        queue.append(
-            {
-                "finding_key": group.get("finding_key", ""),
-                "route": "insufficient_evidence",
-                "severity": max_severity,
-                "agents": sorted(group["agents"]),
-                "evidence_complete": False,
-                "match_mode": group.get("match_mode", ""),
-                "descriptions": {
-                    agent_id: finding.get("description", "")
-                    for agent_id, finding in group["findings"].items()
-                },
-            }
-        )
 
     return queue
 
@@ -487,9 +615,17 @@ def build_json_report(
             group_type: [
                 {
                     "finding_key": group.get("finding_key", ""),
+                    "cluster_key": group.get("cluster_key", ""),
                     "agents": sorted(group["agents"]),
                     "severity": get_max_severity(group["findings"]),
                     "match_mode": group.get("match_mode", ""),
+                    "raw_finding_ids": sorted(
+                        normalize_text(finding.get("raw_finding_id"))
+                        for finding in group["findings"].values()
+                    ),
+                    "semantic_merge_tuple": semantic_merge_tuple(next(iter(group["findings"].values()))),
+                    "pairwise_checks": group.get("pairwise_checks", []),
+                    "rejected_candidates": group.get("rejected_candidates", []),
                     "findings_by_agent": {
                         agent_id: {
                             "severity": finding.get("severity", ""),
@@ -531,6 +667,8 @@ def validate_agent_result(data: dict, agent_id: str) -> list[str]:
 
     for index, finding in enumerate(data.get("findings", [])):
         ensure_finding_key(finding)
+        ensure_raw_finding_id(finding, agent_id)
+        build_cluster_key(finding)
         for key in REQUIRED_FINDING_FIELDS:
             value = finding.get(key, "")
             if not isinstance(value, str):
@@ -586,6 +724,53 @@ def load_agent_payload(result_path: Path, agent_id: str) -> dict | None:
     return data
 
 
+def validate_slice_outputs(review_dir: Path) -> list[str]:
+    """Validate small-slice subagent artifacts before route convergence.
+
+    If a slice manifest exists, convergence must not silently proceed from
+    three hand-written route JSON files while slice JSONs are missing.  This
+    catches the compact-risk failure mode where subagent work only survives in
+    chat transcripts or one oversized agent result.
+    """
+    manifest_path = review_dir / "agent_prompts" / "agent_slice_manifest.json"
+    if not manifest_path.exists():
+        return []
+
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
+    except json.JSONDecodeError as exc:
+        return [f"agent_slice_manifest.json parse failed: {exc}"]
+
+    errors: list[str] = []
+    for index, item in enumerate(manifest.get("slices", [])):
+        result_value = item.get("result_file", "")
+        if not result_value:
+            errors.append(f"slices[{index}] missing result_file")
+            continue
+        result_path = Path(result_value)
+        if not result_path.is_absolute() and not result_path.exists():
+            result_path = review_dir / result_path
+        if not result_path.exists():
+            errors.append(f"missing slice result: {result_path}")
+            continue
+        try:
+            payload = json.loads(result_path.read_text(encoding="utf-8-sig"))
+        except json.JSONDecodeError as exc:
+            errors.append(f"slice JSON parse failed: {result_path}: {exc}")
+            continue
+        for key in REQUIRED_SLICE_KEYS:
+            if key not in payload:
+                errors.append(f"slice missing key {key}: {result_path}")
+        if payload.get("status") not in ("completed", "blocked"):
+            errors.append(f"slice status invalid: {result_path}: {payload.get('status')}")
+        expected_agent = item.get("agent")
+        if expected_agent and payload.get("agent") != expected_agent:
+            errors.append(
+                f"slice agent mismatch: {result_path}: expected {expected_agent}, got {payload.get('agent')}"
+            )
+    return errors
+
+
 def main() -> None:
     if len(sys.argv) < 2:
         print("Usage: python convergence_compare.py <review_dir>")
@@ -593,6 +778,13 @@ def main() -> None:
 
     review_dir = Path(sys.argv[1])
     results_dir = review_dir / "agent_results"
+
+    slice_errors = validate_slice_outputs(review_dir)
+    if slice_errors:
+        print("[ERROR] Small-slice subagent artifacts are incomplete; refusing convergence:")
+        for error in slice_errors:
+            print(f"  - {error}")
+        raise SystemExit(2)
 
     findings_by_agent: dict[str, list[dict]] = {}
     summaries: dict[str, dict] = {}

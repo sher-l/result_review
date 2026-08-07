@@ -15,6 +15,89 @@ from typing import Iterable
 PROJECT_ID_PATTERN = re.compile(r"\b\d{2}[A-Z]{3}\d{3}[A-Z]?\b")
 EVENT_LOG_NAME = "review_event_log.jsonl"
 CASE_MANIFEST_NAME = "case_manifest.json"
+AI_EXECUTION_MANIFEST_NAME = "ai_execution_manifest.json"
+
+
+def current_policy_binding() -> dict[str, str]:
+    """Identify the exact canonical policy used to start a formal audit."""
+    from policy_loader import policy_path
+
+    policy_file = policy_path()
+    policy_bytes = policy_file.read_bytes()
+    policy = json.loads(policy_bytes.decode("utf-8"))
+    return {
+        "framework_version": str(policy.get("framework_version", "") or ""),
+        "policy_sha256": hashlib.sha256(policy_bytes).hexdigest(),
+    }
+
+
+def validate_framework_binding(
+    review_dir: Path,
+    *,
+    require_ai_execution_manifest: bool,
+) -> list[str]:
+    """Return binding errors without changing a review directory.
+
+    A policy version alone is insufficient because policy content can change
+    without a version bump.  Missing fields are failures rather than being
+    backfilled here, so legacy reviews require an explicit rebuild step.
+    """
+    expected = current_policy_binding()
+    errors: list[str] = []
+
+    case_manifest = load_case_manifest(review_dir)
+    if not case_manifest:
+        errors.append("case_manifest.json is missing or unreadable")
+    else:
+        for field, expected_value in expected.items():
+            actual = str(case_manifest.get(field, "") or "")
+            if not actual:
+                errors.append(
+                    f"case_manifest.json is missing {field}; rerun canonical precheck or explicitly rebuild the policy binding"
+                )
+            elif actual != expected_value:
+                errors.append(
+                    f"case_manifest.json {field} does not match the current canonical policy"
+                )
+
+    if require_ai_execution_manifest:
+        ai_manifest = read_json(review_dir / AI_EXECUTION_MANIFEST_NAME)
+        if not ai_manifest:
+            errors.append("ai_execution_manifest.json is missing or unreadable")
+        else:
+            expected_fields = {
+                "policy_version": expected["framework_version"],
+                "policy_sha256": expected["policy_sha256"],
+            }
+            for field, expected_value in expected_fields.items():
+                actual = str(ai_manifest.get(field, "") or "")
+                if not actual:
+                    errors.append(
+                        f"ai_execution_manifest.json is missing {field}; rerun guardrail generation explicitly"
+                    )
+                elif actual != expected_value:
+                    errors.append(
+                        f"ai_execution_manifest.json {field} does not match the current canonical policy"
+                    )
+    return errors
+
+
+def rebuild_case_manifest_policy_binding(review_dir: Path) -> dict:
+    """Explicitly bind a legacy case to the current policy before regeneration."""
+    path = review_dir / CASE_MANIFEST_NAME
+    data = read_json(path)
+    if not data:
+        raise RuntimeError("Cannot rebuild policy binding: case_manifest.json is missing or unreadable")
+
+    previous = {
+        "framework_version": data.get("framework_version", ""),
+        "policy_sha256": data.get("policy_sha256", ""),
+    }
+    data.update(current_policy_binding())
+    data["policy_binding_rebuilt_at"] = datetime.now().isoformat(timespec="seconds")
+    data["policy_binding_previous"] = previous
+    write_json(path, data)
+    return data
 
 
 def infer_project_id(path: Path | str) -> str:
@@ -113,6 +196,10 @@ def append_event(
     *,
     status: str = "success",
     actor: str = "system",
+    task_id: str = "",
+    attempt: int | None = None,
+    phase: str = "",
+    agent: str = "",
     inputs: list[str] | None = None,
     outputs: list[str] | None = None,
     details: dict | None = None,
@@ -122,6 +209,10 @@ def append_event(
         "event_type": event_type,
         "status": status,
         "actor": actor,
+        "task_id": normalize_text(task_id),
+        "attempt": attempt,
+        "phase": normalize_text(phase),
+        "agent": normalize_text(agent) or normalize_text(actor),
         "inputs": inputs or [],
         "outputs": outputs or [],
         "details": details or {},
@@ -141,6 +232,48 @@ def update_case_manifest(review_dir: Path, updates: dict) -> dict:
     path = review_dir / CASE_MANIFEST_NAME
     data = read_json(path)
     data.update(updates)
+    try:
+        from policy_loader import load_policy
+
+        policy = load_policy()
+    except (ImportError, OSError, ValueError, json.JSONDecodeError):
+        policy = {}
+    contract_policy = policy.get("audit_contract_policy", {})
+    if not isinstance(contract_policy, dict):
+        contract_policy = {}
+    notification_policy = policy.get("notification_idempotency_policy", {})
+    if not isinstance(notification_policy, dict):
+        notification_policy = {}
+    professional_policy = policy.get("professional_contract_policy", {})
+    if not isinstance(professional_policy, dict):
+        professional_policy = {}
+    data.setdefault("schema_version", str(contract_policy.get("manifest_schema_version", "1.1")))
+    data.setdefault("audit_contract_version", str(contract_policy.get("audit_contract_version", "1.0")))
+    paths = data.setdefault("paths", {})
+    if isinstance(paths, dict):
+        paths.setdefault(
+            "final_decision",
+            str(review_dir / str(contract_policy.get("decision_json", "final_decision.json"))),
+        )
+        paths.setdefault(
+            "audit_contract_validation",
+            str(review_dir / str(contract_policy.get("validation_json", "audit_contract_validation.json"))),
+        )
+        paths.setdefault(
+            "completion_notification_receipt",
+            str(review_dir / str(notification_policy.get("receipt_json", "completion_notification_receipt.json"))),
+        )
+        paths.setdefault(
+            "professional_contract_validation",
+            str(
+                review_dir
+                / str(
+                    professional_policy.get(
+                        "validation_json", "professional_contract_validation.json"
+                    )
+                )
+            ),
+        )
     data.setdefault("updated_at", datetime.now().isoformat(timespec="seconds"))
     write_json(path, data)
     return data
@@ -153,9 +286,31 @@ def build_case_manifest(
     report_structure: dict,
     project_structure: dict,
     source_archive_path: Path | None = None,
-    review_lane: str = "standard",
+    review_lane: str | None = None,
     docx_only: bool = False,
 ) -> dict:
+    try:
+        from policy_loader import load_policy
+
+        policy = load_policy()
+    except (ImportError, OSError, ValueError, json.JSONDecodeError):
+        policy = {}
+    contract_policy = policy.get("audit_contract_policy", {})
+    if not isinstance(contract_policy, dict):
+        contract_policy = {}
+    notification_policy = policy.get("notification_idempotency_policy", {})
+    if not isinstance(notification_policy, dict):
+        notification_policy = {}
+    professional_policy = policy.get("professional_contract_policy", {})
+    if not isinstance(professional_policy, dict):
+        professional_policy = {}
+    structured_artifacts = professional_policy.get("structured_artifacts", {})
+    if not isinstance(structured_artifacts, dict):
+        structured_artifacts = {}
+    configured_lane = str(
+        policy.get("review_lane_policy", {}).get("default_lane", "strict") or "strict"
+    )
+    review_lane = str(review_lane or configured_lane)
     metadata = project_structure.get("metadata", {})
     project_id = metadata.get("project_id") or infer_project_id(project_dir)
     datasets = [item.get("id", "") for item in project_structure.get("geo_references", []) if item.get("id")]
@@ -175,8 +330,12 @@ def build_case_manifest(
         for item in project_structure.get("modules", [])
     ]
     canonical_html = detect_html_path(review_dir)
+    policy_binding = current_policy_binding()
     return {
-        "schema_version": "1.0",
+        "schema_version": str(contract_policy.get("manifest_schema_version", "1.1")),
+        "framework_version": policy_binding["framework_version"],
+        "policy_sha256": policy_binding["policy_sha256"],
+        "audit_contract_version": str(contract_policy.get("audit_contract_version", "1.0")),
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "updated_at": datetime.now().isoformat(timespec="seconds"),
         "project_id": project_id,
@@ -195,11 +354,40 @@ def build_case_manifest(
             "mechanical_check_result": str(review_dir / "mechanical_check_result.json"),
             "figure_audit": str(review_dir / "figure_audit.md"),
             "visual_prefilter": str(review_dir / "visual_prefilter.json"),
+            "visual_audit_result": str(review_dir / "visual_audit_result.json"),
             "convergence_report": str(review_dir / "convergence_report.json"),
             "audit_state": str(review_dir / "audit_state.json"),
             "final_review_report": str(review_dir / "final_review_report.md"),
             "final_report_lint": str(review_dir / "final_report_lint.json"),
+            "subagent_supervision_summary": str(review_dir / "subagent_supervision_summary.json"),
+            "subagent_supervision_gate": str(review_dir / "subagent_supervision_gate.json"),
             "review_event_log": str(review_dir / EVENT_LOG_NAME),
+            "arbitration_resolution": str(
+                review_dir / "agent_results" / "arbitration" / "arbitration_resolution.json"
+            ),
+            "final_decision": str(
+                review_dir / str(contract_policy.get("decision_json", "final_decision.json"))
+            ),
+            "audit_contract_validation": str(
+                review_dir
+                / str(contract_policy.get("validation_json", "audit_contract_validation.json"))
+            ),
+            "completion_notification_receipt": str(
+                review_dir
+                / str(notification_policy.get("receipt_json", "completion_notification_receipt.json"))
+            ),
+            "professional_contract_validation": str(
+                review_dir
+                / str(
+                    professional_policy.get(
+                        "validation_json", "professional_contract_validation.json"
+                    )
+                )
+            ),
+            **{
+                f"professional_{contract_type}": str(review_dir / str(filename))
+                for contract_type, filename in structured_artifacts.items()
+            },
             "html_report": str(canonical_html),
         },
         "report_summary": {
@@ -225,4 +413,3 @@ def build_case_manifest(
         "parameter_index": project_structure.get("parameter_index", {}),
         "config_files": project_structure.get("config_files", []),
     }
-

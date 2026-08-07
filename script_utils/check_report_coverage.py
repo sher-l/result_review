@@ -103,12 +103,12 @@ class ReportCoverageChecker(BaseProjectChecker):
                     break
 
         if not report_text:
-            # 降级模式：无报告时列出已识别模块供人工对照
+            # 降级模式：无报告时列出已识别模块供 AI对照
             if existing_modules:
                 self.warnings.append({
                     'severity': 'INFO',
                     'category': '模块清单（无报告降级模式）',
-                    'message': f'未找到报告文本，仅列出已识别的 {len(existing_modules)} 个模块类型供人工对照',
+                    'message': f'未找到报告文本，仅列出已识别的 {len(existing_modules)} 个模块类型供 AI对照',
                     'evidence': [{'dir': name, 'type': key} for name, key, _ in existing_modules],
                 })
             return gaps

@@ -2,9 +2,7 @@
   "enabled": true,
   "default_title_prefix": "报告审核",
   "provider": "wecom",
-  "webhook_url": "",
-  "webhook_key": "",
-  "secret": "",
+  "webhook_url": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxx",
   "enabled_task_types": [
     "audit",
     "generic"
@@ -13,5 +11,53 @@
   "mentioned_list": [],
   "extra_fields": {
     "workspace": "报告审核"
+  },
+  "feishu_app_file": {
+    "enabled": false,
+    "app_id": "cli_xxx",
+    "app_secret": "xxx",
+    "chat_id": "oc_xxx",
+    "send_html_report": true,
+    "fail_on_error": false
+  },
+  "webhook_key": "",
+  "secret": "",
+  "wecom_file": {
+    "enabled": true,
+    "send_html_report": true,
+    "fail_on_error": true
+  },
+  "wecom_formal_audit_gate": {
+    "enabled": true,
+    "marker_keys": [
+      "formal_audit",
+      "正式审核",
+      "audit_formal_run"
+    ],
+    "allow_archived_finalize_metadata": true
+  },
+  "release_attestation_gate": {
+    "enabled": true,
+    "required_providers": [
+      "wecom"
+    ],
+    "attestation_filename": "release_attestation.json",
+    "signature_filename": "release_attestation.sig",
+    "public_key_path": "/etc/report-audit/release-signer-public.pem",
+    "max_age_seconds": 900
+  },
+  "fallback_notification": {
+    "enabled": true,
+    "provider": "feishu",
+    "webhook_url": "https://open.feishu.cn/open-apis/bot/v2/hook/xxx",
+    "secret": "feishu_webhook_sign_secret",
+    "feishu_app_file": {
+      "enabled": false,
+      "app_id": "cli_xxx",
+      "app_secret": "xxx",
+      "chat_id": "oc_xxx",
+      "send_html_report": true,
+      "fail_on_error": false
+    }
   }
 }

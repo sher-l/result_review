@@ -54,6 +54,8 @@
 
 **判分规则**：FATAL 存在 → ≤30分；CRITICAL ≥3 → ≤50分；无 FATAL 且 CRITICAL ≤1 → ≥70分可放行。
 
+**代码交付口径**：单纯“未交付代码 / 未发现代码文件 / 代码不可复现风险”只按 WARNING 记录，不得单独升级为 CRITICAL，也不得作为唯一不通过原因。若存在错误项目路径、方法参数矛盾、核心统计错误、结论无证据或数据链断裂，按这些实质问题独立升级。
+
 ## 5. AI 深度审核清单（21 条核心规则）
 
 ### 5.1 覆盖完整性（D1）
@@ -86,9 +88,11 @@
 - **R17**: 报告声称的 R 包名、版本、参数在代码中有对应调用（参照 `project_structure.json` 的包列表）
 - **R18**: 参数阈值（logFC、pvalue、FDR）报告 vs 代码一致（MC-009 已做初步校验，AI 需进一步验证语义上下文）
 - **R19**: 机器学习算法名 → 代码包调用 → 输入特征集三方一致
+- **R19a**: 未交付代码本身只构成 WARNING 级可复现风险；只有当代码/路径/结果证据显示错误项目来源、参数矛盾或核心结论无法追溯时，才按实质问题升级。
 
 ### 5.7 视觉检查
 - **R20**: 逐一检查流程图图片，识别其中列出的分析工具/方法，与交付物目录对照
+- **R20a**: 结果图件可以仅交付可渲染 PDF，不再因缺少 PNG 单独记为问题；若仅有 PNG/JPG 等位图而无 PDF，应按交付规范缺失记录为 WARNING。无论格式如何，文件不可渲染、损坏、错图或影响复核时仍按内容问题升级。
 
 ### 5.8 外项目污染与强度外推
 - **R21**: 正文 / 图注 / 高风险模块中若混入外项目对象（错误疾病、错误药物、错误体系名、错误图号），或“方法定义阈值”与“结论强度”冲突，必须升级为实质问题，不能当成普通措辞瑕疵
@@ -180,24 +184,36 @@
 | `coverage_matrix.md` | 覆盖矩阵（模块×维度） | 收敛后 |
 | `fact_check_list.md` | 事实核对清单 | 收敛后 |
 | `unresolved_items.md` | 未解决项 | 收敛后 |
-| `final_review_report.md` | 最终审核报告（含完整收敛章节） | Layer 4 |
+| `final_review_report.md` | 面向项目方的最终审核报告（仅保留结论、可执行错误与逐分析点结果） | Layer 4 |
 | `<项目编号>_audit_report.html` | HTML 版本 | 最终 |
 
 ### 8.2 Sub-Agent 报告保存规则
 
+- 正式审核默认采用“Lead 监工/整合 + Sub-Agent 分片审核”模式；Lead 不应在主线程直接展开长报告、长日志、完整清单、完整 JSON、完整通知 metadata 或大证据
+- Sub-Agent 聊天回传最多 5 行，只允许状态、输出路径、发现数量、最高严重度和阻断项；完整 Markdown/JSON/长日志/大表必须落盘，不得贴回主线程
+- Lead 最终回复最多 8 行；正式审核完成通知只保留状态、时间、项目、报告文件、审核结果和问题统计，不贴任务类型、任务名称、摘要、workspace、内部路径或监督 JSON 元数据
+- 若任一 Sub-Agent 触发 remote compact/context loss，Lead 必须继续拆分该切片后重试，禁止原范围重跑
+- 正式判断型 Sub-Agent 必须使用与主 agent 相同的模型；如主 agent 为 high reasoning，判断型子代理也必须 high；`fast/mini/explore` 只能用于定位、清单、schema、grep，不能裁定严重度、统计适用性、高风险模块或最终仲裁
 - **每个 Sub-Agent 执行完毕后，必须立即将完整报告保存到 `agent_X_report.md`**
 - 不得仅在内存/对话中保留 Agent 结果而不写入文件
 - `convergence_report.md` 必须包含完整投票表（每行一个问题，标注各 Agent 是否发现）
 - 审核完成前自检：`ls agent_*_report.md convergence_report.md` ——4 个文件必须全部存在
 
-### 8.3 final_review_report.md 收敛章节规则
+### 8.3 final_review_report.md 读者定位与展开规则
 
-- **第六章第 0 节「三路独立审核与交叉收敛」为强制章节**
-- 必须包含四个子节：审核分工表、收敛投票表、收敛结论、评分矩阵
-- **禁止将收敛信息缩减为一句话概述**
-- 参见报告模板 `final_review_report_template.md` 的第六章
+- 收敛投票、审核分工、评分矩阵和机械检查属于审核底稿，不进入最终报告。
+- 顶层 P0/P1 最多 5 个仅限制问题主题；只要错误机制、原报告位置或修订动作不同，必须拆为“具体错误”。
+- 每个具体错误必须包含错误点、原报告位置、原文短句、交付证据和修订要求。
+- `report_text.txt:Lxx` 只可用于审核底稿，最终报告必须使用“原 DOCX 文件名 + 章节/图表标题 + 原文短句”让项目方在自己的 Word 原件中检索。
 
-### 8.4 报告禁用词/禁用格式
+### 8.4 错题集闭环规则
+
+- 审核前必须读取 `lessons/LESSONS_LEARNED.md` 与 `lessons/patterns/`，将相同或相近历史错误列为重点复核项。
+- 审核完成前必须把本次典型错误点沉淀到 `lessons/`；至少记录错误类型、具体表现、触发场景、证据依据、正确标准、下次审核提醒、严重程度。
+- 后续项目命中错题集相关内容时必须加严复核，但错题集只提示风险；必须结合当前项目证据独立判断，不能机械套用历史结论。
+- 如果本次没有新增可复用错误模式，应在审核复盘中明确写明“无新增错题集沉淀项”。
+
+### 8.5 报告禁用词/禁用格式
 
 以下内部术语**不得出现在用户可见的报告标题、元数据或结论中**：
 
@@ -219,6 +235,6 @@
 
 ---
 
-*v6.5 | 压缩自 MASTER_PROMPT + CHECKLIST_TEMPLATE + WORKFLOW + CONVERGENCE_REVIEW_PROTOCOL*
+*v7.1 | 压缩自 MASTER_PROMPT + CHECKLIST_TEMPLATE + WORKFLOW + CONVERGENCE_REVIEW_PROTOCOL*
 *机械检查已下沉至 Layer 0 代码（parse_report_structure.py + parse_project_structure.py + mechanical_checks.py）*
 *详细模块检查 → WORKFLOW_MODULE_CHECKS.md | 统计参考 → STATISTICS_REFERENCE.md*

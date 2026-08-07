@@ -224,7 +224,7 @@ class ClinicalStatisticsChecker(BaseProjectChecker):
                 self.warnings.append({
                     'severity': 'WARNING',
                     'category': '变量一致性',
-                    'message': f'多因素回归中有 {len(extra_in_multi)} 个变量名未在 VIF 筛选文件中直接匹配（可能因 factor/dummy encoding 导致名称变化，请人工确认）: {", ".join(list(extra_in_multi)[:5])}',
+                    'message': f'多因素回归中有 {len(extra_in_multi)} 个变量名未在 VIF 筛选文件中直接匹配（可能因 factor/dummy encoding 导致名称变化，请 AI确认）: {", ".join(list(extra_in_multi)[:5])}',
                 })
 
     def _check_nomogram_module(self):

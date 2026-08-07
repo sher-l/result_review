@@ -62,9 +62,9 @@ class CodeExistenceChecker(BaseProjectChecker):
 
         if not found_code:
             self.warnings.append({
-                'severity': 'INFO',
+                'severity': 'WARNING',
                 'category': '代码缺失',
-                'message': '项目中未发现分析代码文件（.R/.py/.Rmd/.ipynb等），无法评估可复现性',
+                'message': '项目中未发现分析代码文件（.R/.py/.Rmd/.ipynb等），代码不可复现风险按 WARNING 记录',
                 'evidence': {'searched_dirs': code_dirs},
             })
         else:

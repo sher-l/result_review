@@ -57,7 +57,7 @@ class ImageSimilarityChecker(BaseProjectChecker):
     进行两两比较，找出 Hamming 距离 ≤ 阈值的图片对。
 
     - 完全相同（距离 = 0）→ CRITICAL（可能为错误复用）
-    - 高度相似（距离 ≤ 5）→ WARNING（需人工确认）
+    - 高度相似（距离 ≤ 5）→ WARNING（需 AI确认）
     """
 
     # 阈值配置
@@ -156,7 +156,7 @@ class ImageSimilarityChecker(BaseProjectChecker):
                 warnings.append({
                     'type': 'IMAGE_SIMILAR',
                     'severity': 'WARNING',
-                    'message': f'图片高度相似（需人工确认）: {rel_a} ↔ {rel_b}',
+                    'message': f'图片高度相似（需 AI确认）: {rel_a} ↔ {rel_b}',
                     'details': {
                         'file_a': str(rel_a),
                         'file_b': str(rel_b),
