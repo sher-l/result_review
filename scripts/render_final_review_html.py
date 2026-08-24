@@ -2403,11 +2403,12 @@ def _reorder_and_renumber(items: list, get_title) -> list:
 
 def build_toc(markdown_text: str) -> str:
     raw_titles: List[str] = []
+    has_adjudication_index = "裁定标准与核定理由索引" in markdown_text
     for line in markdown_text.splitlines():
         if not line.startswith("## "):
             continue
         title = _display_heading_text(line[3:].strip(), 2)
-        if "逐分析点审核结果" in title:
+        if has_adjudication_index and "逐分析点审核结果" in title:
             continue
         raw_titles.append(title)
     _reorder_and_renumber(raw_titles, lambda t: t)
@@ -2676,7 +2677,8 @@ def remove_analysis_navigation(content_html: str) -> str:
             ),
             None,
         )
-        parts[index] = "" if keep_at is None else "".join(nested_parts[keep_at:])
+        if keep_at is not None:
+            parts[index] = "".join(nested_parts[keep_at:])
         break
     return "".join(parts)
 
@@ -2748,6 +2750,15 @@ def _add_result_column_to_adjudication_index(
             cells.insert(1, "<th>审核结果</th>")
         else:
             issue_match = re.search(r"\bF-\d+\b", re.sub(r"<[^>]+>", "", cells[0]).upper())
+            if issue_match is None:
+                issue_match = next(
+                    (
+                        re.search(r"\bF-\d+\b", re.sub(r"<[^>]+>", "", cell).upper())
+                        for cell in cells[1:]
+                        if re.search(r"\bF-\d+\b", re.sub(r"<[^>]+>", "", cell).upper())
+                    ),
+                    None,
+                )
             issue_id = issue_match.group(0) if issue_match else ""
             severity = severities.get(issue_id)
             result = (

@@ -156,7 +156,14 @@
     },
     "final_report_binding_gate": {
       "mode": "enforce",
-      "rule": "leader_confirmed 后，final_review_report.md 中每个 F-ID 必须经 finding_key 交叉表唯一绑定到 retained canonical finding；reject/revoked 原始发现不得进入正式问题链，严重度、定位/证据和整改要求必须完整。"
+      "rule": "leader_confirmed 后，final_review_report.md 中每个 F-ID 必须经 finding_key 交叉表唯一绑定到 retained canonical finding；reject/revoked 原始发现不得进入正式问题链，严重度、定位/证据和整改要求必须完整；交叉表中的核心问题、原报告位置、交付证据和修订要求必须逐项为不超过80字符的可核验短概述，不得为空、破折号或以 F-ID 指代替代；可搜索定位必须为对应 F-ID 跳转目标，详细依据只保留在 F 条目。",
+      "crosswalk_required_fields": [
+        "核心问题",
+        "原报告位置",
+        "交付证据",
+        "修订要求"
+      ],
+      "crosswalk_summary_max_chars": 80
     },
     "protected_merge_vetoes": [
       "dataset_identity",

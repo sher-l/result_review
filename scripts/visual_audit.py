@@ -343,6 +343,8 @@ def _project_root(review_dir: Path, project_dir: Path | None = None) -> Path | N
     archive_root = Path(archived_to)
     if not archive_root.is_dir():
         return configured_root
+    if archive_root.name == configured_root.name:
+        return archive_root
     for parent in (configured_root, *configured_root.parents):
         if parent.name != review_dir.name:
             continue

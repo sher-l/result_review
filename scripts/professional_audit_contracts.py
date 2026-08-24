@@ -19,6 +19,7 @@ from policy_loader import load_policy
 
 POLICY = load_policy()
 PROFESSIONAL_POLICY = POLICY.get("professional_contract_policy", {})
+FINAL_REPORT_BINDING_POLICY = PROFESSIONAL_POLICY.get("final_report_binding_gate", {})
 HIGH_RISK_POLICY = POLICY.get("high_risk_module_policy", {})
 ARBITRATION_SCHEMA_VERSION = str(PROFESSIONAL_POLICY.get("arbitration_schema_version", "2.0"))
 STRUCTURED_ARTIFACTS = dict(PROFESSIONAL_POLICY.get("structured_artifacts", {}))
@@ -40,6 +41,22 @@ VALID_FINDING_SEVERITIES = {"FATAL", "CRITICAL", "MAJOR", "WARNING", "INFO"}
 _DATASET_IDENTIFIER_RE = re.compile(r"\b(?:gse|gpl|gcst|ebi-a)-?[a-z0-9]+\b", re.IGNORECASE)
 _FORMAL_REPORT_ID_RE = re.compile(r"^F-\d+$", re.IGNORECASE)
 _REVOKED_REPORT_ITEM_RE = re.compile(r"^#{1,6}\s+R-\d+\s+([^\s（(]+)")
+_CROSSWALK_FIELD_ALIASES = {
+    "核心问题": ("核心问题", "问题", "错误描述", "problem"),
+    "原报告位置": ("原报告位置", "位置", "定位", "location"),
+    "交付证据": ("交付证据", "证据", "evidence"),
+    "修订要求": ("修订要求", "整改要求", "整改", "repair"),
+    "可搜索定位": ("可搜索定位", "locator"),
+}
+_CROSSWALK_REQUIRED_FIELDS = tuple(
+    FINAL_REPORT_BINDING_POLICY.get("crosswalk_required_fields", _CROSSWALK_FIELD_ALIASES)
+)
+_CROSSWALK_SUMMARY_MAX_CHARS = int(FINAL_REPORT_BINDING_POLICY.get("crosswalk_summary_max_chars", 80))
+_CROSSWALK_REFERENCE_RE = re.compile(
+    r"^(?:(?:请)?(?:见|参见|see|refer\s+to)\s*)?(?:本报告\s*)?F-\d+(?:\s*(?:具体错误|详情|条目))?[。.]?$",
+    re.IGNORECASE,
+)
+_CROSSWALK_EMPTY_VALUES = {"", "-", "—", "n/a", "na", "无", "暂无", "待补充", "待定"}
 
 
 def _text(value: Any) -> str:
@@ -216,12 +233,17 @@ def _column_index(columns: list[str], *names: str) -> int | None:
     return None
 
 
+def _is_concrete_crosswalk_value(value: str) -> bool:
+    normalized = re.sub(r"\s+", " ", _text(value)).strip()
+    return normalized.casefold() not in _CROSSWALK_EMPTY_VALUES and not _CROSSWALK_REFERENCE_RE.fullmatch(normalized)
+
+
 def _report_crosswalk(report_text: str) -> tuple[dict[str, dict], dict[str, dict], list[str]]:
     """Parse the established final-report issue and analysis-point tables.
 
-    The report does not use canonical IDs directly.  Its compatibility crosswalk
-    is ``raw finding key -> F-ID`` in the analysis-point table, then the F-ID
-    issue table supplies severity, problem text, location/evidence and repair.
+    A report may crosswalk either a raw finding key or a canonical ID to an
+    F-ID.  The latter keeps the formal report bindable when a legacy
+    arbitration disposition lacks an optional ``finding_key`` field.
     """
     findings: dict[str, dict] = {}
     raw_to_report: dict[str, dict] = {}
@@ -249,10 +271,20 @@ def _report_crosswalk(report_text: str) -> tuple[dict[str, dict], dict[str, dict
                     "repair": _text(row[repair]),
                 }
 
-        finding_key = _column_index(columns, "分析点", "finding_key", "原始发现")
+        finding_key = _column_index(columns, "Canonical ID", "canonical_id", "分析点", "finding_key", "原始发现")
         mapped_id = _column_index(columns, "对应问题", "formal finding", "问题编号")
-        searchable_locator = _column_index(columns, "可搜索定位", "定位", "locator")
+        searchable_locator = _column_index(columns, "可搜索定位", "locator")
         if finding_key is not None and mapped_id is not None:
+            content_columns = {
+                field: _column_index(columns, *_CROSSWALK_FIELD_ALIASES[field])
+                for field in _CROSSWALK_REQUIRED_FIELDS
+                if field in _CROSSWALK_FIELD_ALIASES
+            }
+            for field in _CROSSWALK_REQUIRED_FIELDS:
+                if field not in _CROSSWALK_FIELD_ALIASES or content_columns.get(field) is None:
+                    errors.append(f"final report crosswalk missing required content column: {field}")
+            if searchable_locator is None:
+                errors.append("final report crosswalk missing required jump column: 可搜索定位")
             for row in rows:
                 raw_key = _text(row[finding_key])
                 report_id = _text(row[mapped_id]).upper()
@@ -264,6 +296,10 @@ def _report_crosswalk(report_text: str) -> tuple[dict[str, dict], dict[str, dict
                 raw_to_report[raw_key] = {
                     "report_id": report_id,
                     "locator": _text(row[searchable_locator]) if searchable_locator is not None else "",
+                    "content": {
+                        field: _text(row[column]) if column is not None else ""
+                        for field, column in content_columns.items()
+                    },
                 }
     return findings, raw_to_report, errors
 
@@ -290,9 +326,10 @@ def validate_final_report_arbitration_binding(
     """Fail closed unless every formal report finding is traceable to arbitration.
 
     A retained arbitration canonical finding is linked to an ``F-ID`` through
-    its source raw finding's ``finding_key``.  This preserves the existing
-    formal Markdown structure while making report severity, problem text,
-    locator/evidence and repair accountable to a final decision.
+    its source raw finding's ``finding_key`` when available, otherwise through
+    a canonical-ID crosswalk.  This preserves legacy formal Markdown reports
+    while making report severity, problem text, locator/evidence and repair
+    accountable to a final decision.
     """
     errors: list[str] = []
     candidates: list[dict] = []
@@ -311,6 +348,11 @@ def validate_final_report_arbitration_binding(
         _text(item.get("raw_finding_id")): item
         for item in dispositions
         if isinstance(item, dict) and _text(item.get("raw_finding_id"))
+    }
+    canonical_by_id = {
+        _text(item.get("canonical_id")): item
+        for item in canonicals
+        if isinstance(item, dict) and _text(item.get("canonical_id"))
     }
     revoked_keys = _revoked_report_keys(report_text)
     expected_report_ids: set[str] = set()
@@ -332,19 +374,23 @@ def validate_final_report_arbitration_binding(
             if not disposition or disposition.get("decision") == "reject":
                 errors.append(f"{canonical_id} is not retained by an accepted final disposition: {_text(raw_id)}")
                 continue
-            if not raw_key:
-                errors.append(f"{canonical_id} source {_text(raw_id)} lacks finding_key for final-report binding")
+            crosswalk_key = raw_key or canonical_id
+            if crosswalk_key in revoked_keys:
+                errors.append(f"revoked finding key remains in canonical formal finding: {crosswalk_key}")
                 continue
-            if raw_key in revoked_keys:
-                errors.append(f"revoked raw finding key remains in canonical formal finding: {raw_key}")
-                continue
-            mapping = raw_to_report.get(raw_key)
+            mapping = raw_to_report.get(crosswalk_key)
             if not mapping:
-                errors.append(f"retained canonical finding lacks final-report crosswalk: {canonical_id} / {raw_key}")
+                errors.append(f"retained canonical finding lacks final-report crosswalk: {canonical_id} / {crosswalk_key}")
                 continue
-            if not mapping.get("locator"):
-                errors.append(f"final-report crosswalk lacks searchable locator: {raw_key}")
-            mapped.append((raw_key, mapping))
+            for field in _CROSSWALK_REQUIRED_FIELDS:
+                value = mapping.get("content", {}).get(field, "")
+                if not _is_concrete_crosswalk_value(value):
+                    errors.append(f"final-report crosswalk has non-concrete {field}: {crosswalk_key}")
+                elif len(value) > _CROSSWALK_SUMMARY_MAX_CHARS:
+                    errors.append(f"final-report crosswalk summary exceeds {_CROSSWALK_SUMMARY_MAX_CHARS} characters: {crosswalk_key} / {field}")
+            if _text(mapping.get("locator")).upper() != mapping["report_id"]:
+                errors.append(f"final-report crosswalk locator must jump to mapped formal finding: {crosswalk_key}")
+            mapped.append((crosswalk_key, mapping))
         report_ids = {mapping["report_id"] for _, mapping in mapped}
         if len(report_ids) != 1:
             errors.append(f"{canonical_id} must map to exactly one formal report finding")
@@ -374,6 +420,11 @@ def validate_final_report_arbitration_binding(
     for raw_key, mapping in raw_to_report.items():
         if raw_key in revoked_keys:
             errors.append(f"revoked raw finding key appears in formal report crosswalk: {raw_key}")
+        if raw_key in canonical_by_id:
+            continue
+        if re.fullmatch(r"C-\d+", raw_key, flags=re.IGNORECASE):
+            errors.append(f"formal report crosswalk has no arbitration canonical finding: {raw_key}")
+            continue
         matching_dispositions = [
             item for item in disposition_by_raw.values()
             if _text(item.get("finding_key")) == raw_key

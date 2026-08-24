@@ -1328,11 +1328,18 @@ class TestReorderSections:
 
         result = remove_analysis_navigation(content)
 
-        assert "逐分析点审核结果" not in result
-        assert "导航" not in result
-        assert "F-ID 绑定索引" not in result
-        assert "F-01 → A01-F001" not in result
+        assert "逐分析点审核结果" in result
+        assert "导航" in result
+        assert "F-ID 绑定索引" in result
+        assert "F-01 → A01-F001" in result
         assert 'id="三-提交阻断问题"' in result
+
+    def test_analysis_navigation_stays_in_toc_without_replacement_index(self):
+        toc = build_toc(
+            "## 一、审核结论\n\n## 二、逐分析点审核结果\n\n## 三、提交阻断问题\n"
+        )
+
+        assert "逐分析点审核结果" in toc
 
     def test_issue_dashboard_source_is_removed_from_reader_html(self):
         content = (
@@ -1365,6 +1372,22 @@ class TestReorderSections:
         assert 'id="裁定标准与核定理由索引"' in result
         assert "<th>审核结果</th><th>错误点</th>" in result
         assert result.find("核定理由") < result.find("三、后续")
+
+    def test_adjudication_index_uses_mapped_finding_id_for_result_and_error(self):
+        content = (
+            '<h3 id="裁定标准与核定理由索引">裁定标准与核定理由索引</h3>'
+            '<table><thead><tr><th>原始发现</th><th>对应问题</th><th>核心问题</th></tr></thead>'
+            '<tbody><tr><td>fk:a</td><td>F-01</td><td>实际错误</td></tr></tbody></table>'
+        )
+
+        result = collapse_adjudication_reason_index(
+            content,
+            {"F-01": "MAJOR"},
+            {"F-01": "实际错误"},
+        )
+
+        assert "需修订" in result
+        assert '<td>实际错误</td>' in result
 
     def test_build_html_places_expanded_adjudication_navigation_before_blockers(self, tmp_path):
         source = tmp_path / "final_review_report.md"
@@ -1457,12 +1480,13 @@ class TestBuildToc:
         method_pos = toc.find("方法论")
         assert summary_pos < detail_pos < method_pos
 
-    def test_analysis_results_are_omitted_from_toc(self):
+    def test_analysis_results_are_omitted_from_toc_with_replacement_index(self):
         md = (
             "## 一、审核结论\n"
             "## 二、提交阻断问题\n"
             "## 三、其他已裁定问题\n"
             "## 四、逐分析点审核结果\n"
+            "### 裁定标准与核定理由索引\n"
         )
 
         toc = build_toc(md)

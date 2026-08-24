@@ -247,10 +247,10 @@ def _bound_final_report() -> str:
 | --- | --- | --- | --- | --- | --- |
 | F-01 | MAJOR | validation leakage | §1.2 | evidence.json:row 1 | rebuild split |
 
-| 分析点 | 对应问题 | 可搜索定位 |
-| --- | --- | --- |
-| fk:a | F-01 | §1.2 |
-| fk:b | F-01 | §1.2 |
+| 分析点 | 对应问题 | 核心问题 | 原报告位置 | 交付证据 | 修订要求 | 可搜索定位 |
+| --- | --- | --- | --- | --- | --- | --- |
+| fk:a | F-01 | validation leakage | §1.2 | evidence.json:row 1 | rebuild split | F-01 |
+| fk:b | F-01 | validation leakage | §1.2 | evidence.json:row 1 | rebuild split | F-01 |
 """
 
 
@@ -281,6 +281,39 @@ def test_final_report_binding_requires_retained_crosswalk_and_rejects_revoked_it
     )
     assert revoked["valid"] is False
     assert any("revoked raw finding key" in error for error in revoked["errors"])
+
+
+def test_final_report_binding_rejects_crosswalk_reference_placeholders():
+    report = _bound_final_report().replace(
+        "| fk:a | F-01 | validation leakage | §1.2 | evidence.json:row 1 | rebuild split | F-01 |",
+        "| fk:a | F-01 | 见 F-01 具体错误 | 见 F-01 具体错误 | 见 F-01 具体错误 | 见 F-01 具体错误 | F-01 |",
+    )
+
+    blocked = validate_final_report_arbitration_binding(
+        report,
+        _valid_arbitration(),
+        {"canonical_finding_count": 1, "severity_counts": {"MAJOR": 1}},
+    )
+
+    assert blocked["valid"] is False
+    assert any("non-concrete 核心问题" in error for error in blocked["errors"])
+
+
+def test_final_report_binding_requires_brief_summaries_and_finding_jump():
+    concise = validate_final_report_arbitration_binding(
+        _bound_final_report(),
+        _valid_arbitration(),
+        {"canonical_finding_count": 1, "severity_counts": {"MAJOR": 1}},
+    )
+    assert concise["valid"] is True
+
+    verbose = validate_final_report_arbitration_binding(
+        _bound_final_report().replace("validation leakage", "x" * 81),
+        _valid_arbitration(),
+        {"canonical_finding_count": 1, "severity_counts": {"MAJOR": 1}},
+    )
+    assert verbose["valid"] is False
+    assert any("summary exceeds" in error for error in verbose["errors"])
 
 
 def test_enforced_professional_gate_runs_final_report_binding_after_decision_seal(tmp_path):
@@ -323,7 +356,10 @@ def test_enforced_professional_gate_runs_final_report_binding_after_decision_sea
     assert valid["blocking"] is False
 
     (review_dir / "final_review_report.md").write_text(
-        _bound_final_report().replace("| fk:a | F-01 | §1.2 |", "| fk:a |  | §1.2 |"),
+        _bound_final_report().replace(
+            "| fk:a | F-01 | validation leakage | §1.2 | evidence.json:row 1 | rebuild split | F-01 |",
+            "| fk:a |  | validation leakage | §1.2 | evidence.json:row 1 | rebuild split | F-01 |",
+        ),
         encoding="utf-8",
     )
     blocked = validate_review_professional_contracts(review_dir, policy)
